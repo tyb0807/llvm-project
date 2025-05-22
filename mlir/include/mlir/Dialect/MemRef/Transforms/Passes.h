@@ -20,10 +20,13 @@ namespace mlir {
 class AffineDialect;
 class ModuleOp;
 
-namespace func {
 namespace arith {
 class ArithDialect;
 } // namespace arith
+namespace cf {
+class ControlFlowDialect;
+} // namespace cf
+namespace func {
 class FuncDialect;
 } // namespace func
 namespace scf {

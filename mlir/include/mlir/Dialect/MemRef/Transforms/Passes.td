@@ -11,6 +11,25 @@
 
 include "mlir/Pass/PassBase.td"
 
+def AssertInBoundsPass : Pass<"memref-assert-in-bounds"> {
+  let summary = "Insert assertions that memref accesses are in bounds.";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "cf::ControlFlowDialect",
+    "memref::MemRefDialect",
+  ];
+  let options = [
+    Option<"warnOnUnknown", "warn-on-unknown", "bool", /*default=*/"true",
+      "Warn on unknown side-effecting operations">,
+    Option<"includeVectorLoadStore", "include-vector-load-store", "bool",
+      /*default=*/"false",
+      "Include vector.load/store operations despite them allowing "
+      "out-of-bounds">,
+    Option<"checkEachDim", "check-each-dim", "bool", /*default=*/"true",
+      "Check each dimension individually">
+  ];
+}
+
 def ExpandOpsPass : Pass<"memref-expand"> {
   let summary = "Legalize memref operations to be convertible to LLVM.";
 }
