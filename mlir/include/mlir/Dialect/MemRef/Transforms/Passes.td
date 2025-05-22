@@ -30,6 +30,10 @@ def AssertInBoundsPass : Pass<"memref-assert-in-bounds"> {
   ];
 }
 
+def CheckStaticAssertionsPass : Pass<"check-static-assertions"> {
+  let summary = "Fail if the IR contains a known-false assertion.";
+}
+
 def ExpandOpsPass : Pass<"memref-expand"> {
   let summary = "Legalize memref operations to be convertible to LLVM.";
 }

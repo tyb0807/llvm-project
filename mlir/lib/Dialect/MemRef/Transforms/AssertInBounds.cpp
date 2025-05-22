@@ -6,12 +6,17 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir::memref {
 #define GEN_PASS_DEF_ASSERTINBOUNDSPASS
+#include "mlir/Dialect/MemRef/Transforms/Passes.h.inc"
+
+// TODO: this does not belong here!
+#define GEN_PASS_DEF_CHECKSTATICASSERTIONSPASS
 #include "mlir/Dialect/MemRef/Transforms/Passes.h.inc"
 } // namespace mlir::memref
 
@@ -184,4 +189,23 @@ void AssertInBoundsPass::runOnOperation() {
   if (walkResult.wasInterrupted())
     signalPassFailure();
 }
+
+class CheckStaticAssertionsPass
+    : public memref::impl::CheckStaticAssertionsPassBase<
+          CheckStaticAssertionsPass> {
+public:
+  void runOnOperation() override {
+    WalkResult walkResult = getOperation()->walk([&](cf::AssertOp assertOp) {
+      APInt value;
+      if (matchPattern(assertOp.getArg(), m_ConstantInt(&value)) &&
+          value.isZero()) {
+        assertOp->emitError() << "assertion known to be false";
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (walkResult.wasInterrupted())
+      signalPassFailure();
+  }
+};
 } // namespace
