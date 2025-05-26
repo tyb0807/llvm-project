@@ -110,6 +110,7 @@ set(MLIR_TEST_DEPENDS
   mlir-capi-transform-test
   mlir-capi-transform-interpreter-test
   mlir-capi-translation-test
+  mlir-custom-opt
   mlir-linalg-ods-yaml-gen
   mlir-lsp-server
   mlir-opt
