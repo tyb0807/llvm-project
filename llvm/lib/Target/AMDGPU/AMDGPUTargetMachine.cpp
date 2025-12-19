@@ -533,6 +533,12 @@ static cl::opt<bool> EnableScalarIRPasses(
   cl::init(true),
   cl::Hidden);
 
+static cl::opt<bool> EnableCondBarriers(
+  "amdgpu-enable-cond-barriers",
+  cl::desc("Enable automatic conditional barrier insertion for loops"),
+  cl::init(false),
+  cl::Hidden);
+
 static cl::opt<bool> EnableLowerExecSync(
     "amdgpu-enable-lower-exec-sync",
     cl::desc("Enable lowering of execution synchronization."), cl::init(true),
@@ -639,6 +645,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAMDGPUTarget() {
   initializeSIOptimizeVGPRLiveRangeLegacyPass(*PR);
   initializeSILoadStoreOptimizerLegacyPass(*PR);
   initializeAMDGPUCtorDtorLoweringLegacyPass(*PR);
+  initializeAMDGPUInsertCondBarriersPass(*PR);
   initializeAMDGPUAlwaysInlinePass(*PR);
   initializeAMDGPULowerExecSyncLegacyPass(*PR);
   initializeAMDGPUSwLowerLDSLegacyPass(*PR);
@@ -1679,6 +1686,10 @@ void GCNPassConfig::addOptimizedRegAlloc() {
 
   if (EnableRewritePartialRegUses)
     insertPass(&RenameIndependentSubregsID, &GCNRewritePartialRegUsesID);
+
+  // Insert conditional barriers before pre-RA optimizations to avoid SGPR allocation issues
+  if (isPassEnabled(EnableCondBarriers))
+    insertPass(&RenameIndependentSubregsID, &AMDGPUInsertCondBarriersID);
 
   if (isPassEnabled(EnablePreRAOptimizations))
     insertPass(&MachineSchedulerID, &GCNPreRAOptimizationsID);

@@ -56,6 +56,7 @@ FunctionPass *createSIPostRABundlerPass();
 FunctionPass *createAMDGPUImageIntrinsicOptimizerPass(const TargetMachine *);
 ModulePass *createAMDGPURemoveIncompatibleFunctionsPass(const TargetMachine *);
 FunctionPass *createAMDGPUCodeGenPreparePass();
+FunctionPass *createAMDGPUInsertCondBarriersPass();
 FunctionPass *createAMDGPULateCodeGenPrepareLegacyPass();
 FunctionPass *createAMDGPUReserveWWMRegsPass();
 FunctionPass *createAMDGPURewriteOutArgumentsPass();
@@ -105,6 +106,9 @@ enum class ScanOptions { DPP, Iterative, None };
 FunctionPass *createAMDGPUAtomicOptimizerPass(ScanOptions ScanStrategy);
 void initializeAMDGPUAtomicOptimizerPass(PassRegistry &);
 extern char &AMDGPUAtomicOptimizerID;
+
+void initializeAMDGPUInsertCondBarriersPass(PassRegistry &);
+extern char &AMDGPUInsertCondBarriersID;
 
 ModulePass *createAMDGPUCtorDtorLoweringLegacyPass();
 void initializeAMDGPUCtorDtorLoweringLegacyPass(PassRegistry &);

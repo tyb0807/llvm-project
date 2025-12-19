@@ -1,0 +1,340 @@
+# NOTE: Comprehensive test for AMDGPUInsertCondBarriers pass
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx942 -amdgpu-enable-cond-barriers -run-pass=amdgpu-insert-cond-barriers %s -o - | FileCheck %s --check-prefix=BASIC
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx942 -amdgpu-enable-cond-barriers -run-pass=amdgpu-insert-cond-barriers -amdgpu-cond-barrier-threshold=512 %s -o - | FileCheck %s --check-prefix=THRESHOLD
+
+# This test covers:
+# 1. Basic functionality - conditional barriers inserted for valid loops
+# 2. Edge cases - no insertion when preheader/exit missing or no workItemIDX
+# 3. Custom threshold values
+# 4. Multiple loops handling
+
+--- |
+  define amdgpu_kernel void @test_basic_insertion() { ret void }
+  define amdgpu_kernel void @test_no_preheader() { ret void }
+  define amdgpu_kernel void @test_no_exit() { ret void }
+  define amdgpu_kernel void @test_no_workitemidx() { ret void }
+  define amdgpu_kernel void @test_custom_threshold() { ret void }
+  define amdgpu_kernel void @test_multiple_loops() { ret void }
+...
+
+---
+name: test_basic_insertion
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    ; Loop header with preheader
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter, 100, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.3, implicit $scc
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    ; Loop body
+    %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+    %loop_counter = COPY %incremented
+    S_BRANCH %bb.1
+
+  bb.3:
+    ; Loop exit
+    S_ENDPGM 0
+
+# BASIC-LABEL: name: test_basic_insertion
+# Check workItemIDX register assignment
+# BASIC: %[[WORKITEMIDX:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
+
+# Check prologue conditional barrier inserted before loop
+# BASIC: %[[THREADID_SGPR1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX]](s32)
+# BASIC-NEXT: %[[THRESHOLD1:[0-9]+]]:sreg_32 = S_MOV_B32 256
+# BASIC-NEXT: S_CMP_GE_U32 %[[THREADID_SGPR1]], %[[THRESHOLD1]], implicit-def $scc
+# BASIC-NEXT: S_CBRANCH_SCC0 %bb.{{[0-9]+}}, implicit $scc
+# BASIC-NEXT: S_BRANCH %bb.{{[0-9]+}}
+
+# Check that DoBarrierBB exists with S_BARRIER
+# BASIC: S_BARRIER
+# BASIC-NEXT: S_BRANCH %bb.[[LOOP_HEADER:[0-9]+]]
+
+# Verify we branch to the actual loop header
+# BASIC: bb.[[LOOP_HEADER]]:
+# BASIC: %loop_counter:sgpr_32 = S_MOV_B32 0
+
+# Check epilogue conditional barrier inserted at loop exit
+# BASIC: %[[THREADID_SGPR2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX]](s32)
+# BASIC: %[[THRESHOLD2:[0-9]+]]:sreg_32 = S_MOV_B32 256
+# BASIC: S_CMP_LT_U32 %[[THREADID_SGPR2]], %[[THRESHOLD2]], implicit-def $scc
+# BASIC: S_CBRANCH_SCC0 %bb.{{[0-9]+}}, implicit $scc
+# BASIC: S_BARRIER
+# BASIC: S_ENDPGM 0
+
+# Test with custom threshold
+# THRESHOLD-LABEL: name: test_basic_insertion
+# THRESHOLD: %[[WORKITEMIDX_T:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
+# THRESHOLD: %[[THREADID_SGPR_T1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_T]](s32)
+# THRESHOLD: %[[THRESHOLD1_T:[0-9]+]]:sreg_32 = S_MOV_B32 512
+# THRESHOLD: S_CMP_GE_U32 %[[THREADID_SGPR_T1]], %[[THRESHOLD1_T]], implicit-def $scc
+# THRESHOLD: S_CBRANCH_SCC0 %bb.{{[0-9]+}}, implicit $scc
+# THRESHOLD: S_BARRIER
+# THRESHOLD: S_BRANCH %bb.[[LOOP_HEADER_T:[0-9]+]]
+# THRESHOLD: bb.[[LOOP_HEADER_T]]:
+# THRESHOLD: %[[THREADID_SGPR_T2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_T]](s32)
+# THRESHOLD: %[[THRESHOLD2_T:[0-9]+]]:sreg_32 = S_MOV_B32 512
+# THRESHOLD: S_CMP_LT_U32 %[[THREADID_SGPR_T2]], %[[THRESHOLD2_T]], implicit-def $scc
+
+---
+name: test_no_preheader
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    ; Branch directly to loop - no unique preheader
+    %cond:sgpr_32 = S_MOV_B32 1
+    S_CMP_EQ_U32 %cond, 1, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.2, implicit $scc
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.1(0x80000000), %bb.2(0x20000000)
+    ; Loop header with multiple entries
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter, 100, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.2, implicit $scc
+    S_BRANCH %bb.1
+
+  bb.2:
+    S_ENDPGM 0
+
+# BASIC-LABEL: name: test_no_preheader
+# Should insert conditional barriers even without preheader (enhanced functionality)
+# BASIC: %[[WORKITEMIDX_NP:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
+# Check prologue barrier was created in new block
+# BASIC: bb.3:
+# BASIC: %[[THREADID_SGPR_NP1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_NP]](s32)
+# BASIC: %[[THRESHOLD1_NP:[0-9]+]]:sreg_32 = S_MOV_B32 256
+# BASIC: S_CMP_GE_U32 %[[THREADID_SGPR_NP1]], %[[THRESHOLD1_NP]], implicit-def $scc
+# BASIC: S_BARRIER
+# Check epilogue barrier was created
+# BASIC: bb.4:
+# BASIC: %[[THREADID_SGPR_NP2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_NP]](s32)
+# BASIC: %[[THRESHOLD2_NP:[0-9]+]]:sreg_32 = S_MOV_B32 256
+# BASIC: S_CMP_LT_U32 %[[THREADID_SGPR_NP2]], %[[THRESHOLD2_NP]], implicit-def $scc
+# BASIC: S_BARRIER
+
+---
+name: test_no_exit
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    ; Preheader exists
+    %init_counter:sgpr_32 = S_MOV_B32 0
+    S_BRANCH %bb.2
+
+  bb.2:
+    successors: %bb.2(0x80000000)
+    ; Infinite loop - no exit blocks
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+    S_BRANCH %bb.2
+
+# BASIC-LABEL: name: test_no_exit
+# Should not insert any conditional barriers (infinite loop, no exit)
+# BASIC: tracksRegLiveness: true
+# BASIC: S_BRANCH %bb.2
+# BASIC-NOT: S_MOV_B32 256
+
+---
+name: test_no_workitemidx
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    # Note: No workItemIDX defined
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    ; Loop with preheader and exit
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter, 100, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.3, implicit $scc
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+    %loop_counter = COPY %incremented
+    S_BRANCH %bb.1
+
+  bb.3:
+    S_ENDPGM 0
+
+# BASIC-LABEL: name: test_no_workitemidx
+# Should not insert any conditional barriers when workItemIDX is not available
+# BASIC: tracksRegLiveness: true
+# BASIC-NOT: S_MOV_B32 256
+# BASIC: S_ENDPGM 0
+
+---
+name: test_custom_threshold
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter, 100, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.3, implicit $scc
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+    %loop_counter = COPY %incremented
+    S_BRANCH %bb.1
+
+  bb.3:
+    S_ENDPGM 0
+
+# THRESHOLD-LABEL: name: test_custom_threshold
+# Check workItemIDX register assignment
+# THRESHOLD: %[[WORKITEMIDX_CT:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
+# THRESHOLD: bb.1:
+# THRESHOLD: %[[THREADID_SGPR_CT1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_CT]](s32)
+# THRESHOLD: %{{[0-9]+}}:sreg_32 = S_MOV_B32 512
+# THRESHOLD: S_CMP_GE_U32 %[[THREADID_SGPR_CT1]], %{{[0-9]+}}, implicit-def $scc
+# THRESHOLD: S_CBRANCH_SCC0 %bb.{{[0-9]+}}, implicit $scc
+# THRESHOLD: S_BARRIER
+# THRESHOLD: bb.3:
+# THRESHOLD: %[[THREADID_SGPR_CT2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_CT]](s32)
+# THRESHOLD: %{{[0-9]+}}:sreg_32 = S_MOV_B32 512
+# THRESHOLD: S_CMP_LT_U32 %[[THREADID_SGPR_CT2]], %{{[0-9]+}}, implicit-def $scc
+# THRESHOLD: S_CBRANCH_SCC0 %bb.{{[0-9]+}}, implicit $scc
+# THRESHOLD: S_BARRIER
+
+---
+name: test_multiple_loops
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    ; First loop
+    %loop_counter1:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter1, 50, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.3, implicit $scc
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    %incremented1:sgpr_32 = S_ADD_U32 %loop_counter1, 1, implicit-def $scc
+    %loop_counter1 = COPY %incremented1
+    S_BRANCH %bb.1
+
+  bb.3:
+    successors: %bb.4(0x80000000)
+    S_BRANCH %bb.4
+
+  bb.4:
+    successors: %bb.5(0x40000000), %bb.6(0x40000000)
+    ; Second loop
+    %loop_counter2:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter2, 50, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.6, implicit $scc
+
+  bb.5:
+    successors: %bb.4(0x80000000)
+    %incremented2:sgpr_32 = S_ADD_U32 %loop_counter2, 1, implicit-def $scc
+    %loop_counter2 = COPY %incremented2
+    S_BRANCH %bb.4
+
+  bb.6:
+    S_ENDPGM 0
+
+# BASIC-LABEL: name: test_multiple_loops
+# BASIC: %[[WORKITEMIDX_M:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
+# Check that barriers are inserted for both loops - should see 4 barriers total
+# BASIC: %[[THREADID_SGPR_M1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_M]](s32)
+# BASIC: %[[THRESHOLD1_M:[0-9]+]]:sreg_32 = S_MOV_B32 256
+# BASIC: S_CMP_GE_U32 %[[THREADID_SGPR_M1]], %[[THRESHOLD1_M]], implicit-def $scc
+# BASIC: S_BARRIER
+# BASIC: %[[THREADID_SGPR_M2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_M]](s32)
+# BASIC: %[[THRESHOLD2_M:[0-9]+]]:sreg_32 = S_MOV_B32 256
+# BASIC: S_CMP_LT_U32 %[[THREADID_SGPR_M2]], %[[THRESHOLD2_M]], implicit-def $scc
+# BASIC: S_BARRIER
+# BASIC: %[[THREADID_SGPR_M3:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_M]](s32)
+# BASIC: %[[THRESHOLD3_M:[0-9]+]]:sreg_32 = S_MOV_B32 256
+# BASIC: S_CMP_GE_U32 %[[THREADID_SGPR_M3]], %[[THRESHOLD3_M]], implicit-def $scc
+# BASIC: S_BARRIER
+# BASIC: %[[THREADID_SGPR_M4:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_M]](s32)
+# BASIC: %[[THRESHOLD4_M:[0-9]+]]:sreg_32 = S_MOV_B32 256
+# BASIC: S_CMP_LT_U32 %[[THREADID_SGPR_M4]], %[[THRESHOLD4_M]], implicit-def $scc
+# BASIC: S_BARRIER
