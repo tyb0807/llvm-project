@@ -13,9 +13,11 @@
 
 #include "AMDGPU.h"
 #include "GCNSubtarget.h"
+#include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "SIRegisterInfo.h"
+#include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -23,8 +25,10 @@
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/TargetParser/TargetParser.h"
 
 using namespace llvm;
+using namespace llvm::AMDGPU;
 
 #define DEBUG_TYPE "amdgpu-insert-cond-barriers"
 
@@ -279,7 +283,15 @@ bool AMDGPUInsertCondBarriers::insertCondBarrierPrologue(
   BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
       .addMBB(DoBarrierBB);
 
-  // DoBarrierBB: Execute the barrier and continue to header
+  // DoBarrierBB: Execute memory barrier followed by synchronization barrier
+  // Create S_WAITCNT for LDS/GDS operations before barrier
+  AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST.getCPU());
+  // Use max values for vmcnt/expcnt (don't wait), 0 for lgkmcnt (wait for all LDS/GDS)
+  unsigned VmcntMax = AMDGPU::getVmcntBitMask(IV);
+  unsigned ExpcntMax = AMDGPU::getExpcntBitMask(IV);
+  unsigned WaitcntImm = AMDGPU::encodeWaitcnt(IV, VmcntMax, ExpcntMax, 0);
+  BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_WAITCNT))
+      .addImm(WaitcntImm);
   BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BARRIER));
   BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
       .addMBB(Header);
@@ -367,7 +379,15 @@ bool AMDGPUInsertCondBarriers::insertCondBarrierEpilogue(
     BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
         .addMBB(DoBarrierBB);
 
-    // DoBarrierBB: Execute the barrier and continue to exit
+    // DoBarrierBB: Execute memory barrier followed by synchronization barrier
+    // Create S_WAITCNT for LDS/GDS operations before barrier
+    AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST.getCPU());
+    // Use max values for vmcnt/expcnt (don't wait), 0 for lgkmcnt (wait for all LDS/GDS)
+    unsigned VmcntMax = AMDGPU::getVmcntBitMask(IV);
+    unsigned ExpcntMax = AMDGPU::getExpcntBitMask(IV);
+    unsigned WaitcntImm = AMDGPU::encodeWaitcnt(IV, VmcntMax, ExpcntMax, 0);
+    BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_WAITCNT))
+        .addImm(WaitcntImm);
     BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BARRIER));
     BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
         .addMBB(ExitBB);

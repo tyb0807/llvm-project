@@ -64,20 +64,22 @@ body: |
 # BASIC-NEXT: S_CBRANCH_SCC0 %bb.{{[0-9]+}}, implicit $scc
 # BASIC-NEXT: S_BRANCH %bb.{{[0-9]+}}
 
-# Check that DoBarrierBB exists with S_BARRIER
-# BASIC: S_BARRIER
+# Check that DoBarrierBB exists with S_WAITCNT followed by S_BARRIER
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
 # BASIC-NEXT: S_BRANCH %bb.[[LOOP_HEADER:[0-9]+]]
 
 # Verify we branch to the actual loop header
 # BASIC: bb.[[LOOP_HEADER]]:
 # BASIC: %loop_counter:sgpr_32 = S_MOV_B32 0
 
-# Check epilogue conditional barrier inserted at loop exit
+# Check epilogue conditional barrier inserted at loop exit with S_WAITCNT
 # BASIC: %[[THREADID_SGPR2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX]](s32)
 # BASIC: %[[THRESHOLD2:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_LT_U32 %[[THREADID_SGPR2]], %[[THRESHOLD2]], implicit-def $scc
 # BASIC: S_CBRANCH_SCC0 %bb.{{[0-9]+}}, implicit $scc
-# BASIC: S_BARRIER
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
 # BASIC: S_ENDPGM 0
 
 # Test with custom threshold
@@ -87,12 +89,15 @@ body: |
 # THRESHOLD: %[[THRESHOLD1_T:[0-9]+]]:sreg_32 = S_MOV_B32 512
 # THRESHOLD: S_CMP_GE_U32 %[[THREADID_SGPR_T1]], %[[THRESHOLD1_T]], implicit-def $scc
 # THRESHOLD: S_CBRANCH_SCC0 %bb.{{[0-9]+}}, implicit $scc
-# THRESHOLD: S_BARRIER
+# THRESHOLD: S_WAITCNT {{[0-9]+}}
+# THRESHOLD-NEXT: S_BARRIER
 # THRESHOLD: S_BRANCH %bb.[[LOOP_HEADER_T:[0-9]+]]
 # THRESHOLD: bb.[[LOOP_HEADER_T]]:
 # THRESHOLD: %[[THREADID_SGPR_T2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_T]](s32)
 # THRESHOLD: %[[THRESHOLD2_T:[0-9]+]]:sreg_32 = S_MOV_B32 512
 # THRESHOLD: S_CMP_LT_U32 %[[THREADID_SGPR_T2]], %[[THRESHOLD2_T]], implicit-def $scc
+# THRESHOLD: S_WAITCNT {{[0-9]+}}
+# THRESHOLD-NEXT: S_BARRIER
 
 ---
 name: test_no_preheader
@@ -135,13 +140,15 @@ body: |
 # BASIC: %[[THREADID_SGPR_NP1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_NP]](s32)
 # BASIC: %[[THRESHOLD1_NP:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_GE_U32 %[[THREADID_SGPR_NP1]], %[[THRESHOLD1_NP]], implicit-def $scc
-# BASIC: S_BARRIER
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
 # Check epilogue barrier was created
 # BASIC: bb.4:
 # BASIC: %[[THREADID_SGPR_NP2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_NP]](s32)
 # BASIC: %[[THRESHOLD2_NP:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_LT_U32 %[[THREADID_SGPR_NP2]], %[[THRESHOLD2_NP]], implicit-def $scc
-# BASIC: S_BARRIER
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
 
 ---
 name: test_no_exit
@@ -321,20 +328,24 @@ body: |
 
 # BASIC-LABEL: name: test_multiple_loops
 # BASIC: %[[WORKITEMIDX_M:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
-# Check that barriers are inserted for both loops - should see 4 barriers total
+# Check that barriers are inserted for both loops - should see 4 barriers total with waitcnts
 # BASIC: %[[THREADID_SGPR_M1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_M]](s32)
 # BASIC: %[[THRESHOLD1_M:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_GE_U32 %[[THREADID_SGPR_M1]], %[[THRESHOLD1_M]], implicit-def $scc
-# BASIC: S_BARRIER
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
 # BASIC: %[[THREADID_SGPR_M2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_M]](s32)
 # BASIC: %[[THRESHOLD2_M:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_LT_U32 %[[THREADID_SGPR_M2]], %[[THRESHOLD2_M]], implicit-def $scc
-# BASIC: S_BARRIER
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
 # BASIC: %[[THREADID_SGPR_M3:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_M]](s32)
 # BASIC: %[[THRESHOLD3_M:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_GE_U32 %[[THREADID_SGPR_M3]], %[[THRESHOLD3_M]], implicit-def $scc
-# BASIC: S_BARRIER
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
 # BASIC: %[[THREADID_SGPR_M4:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_M]](s32)
 # BASIC: %[[THRESHOLD4_M:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_LT_U32 %[[THREADID_SGPR_M4]], %[[THRESHOLD4_M]], implicit-def $scc
-# BASIC: S_BARRIER
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
