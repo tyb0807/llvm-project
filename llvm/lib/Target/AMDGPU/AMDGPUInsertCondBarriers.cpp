@@ -69,6 +69,9 @@ private:
   bool insertCondBarrierPrologue(MachineLoop *ML, const CondBarrierConfig &Config);
   bool insertCondBarrierEpilogue(MachineLoop *ML, const CondBarrierConfig &Config);
 
+  // Enhanced barrier duplication in loop body
+  bool duplicateBarriersInLoopBody(MachineLoop *ML);
+
   // Helper to find workItemIDX register using SIMachineFunctionInfo
   unsigned findWorkItemIDXRegister(MachineFunction &MF);
 };
@@ -124,10 +127,14 @@ bool AMDGPUInsertCondBarriers::runOnMachineFunction(MachineFunction &MF) {
     // INSERTION PHASE - both barriers can be inserted
     bool PrologueInserted = insertCondBarrierPrologue(ML, Config);
     bool EpilogueInserted = insertCondBarrierEpilogue(ML, Config);
+    bool BarriersDuplicated = duplicateBarriersInLoopBody(ML);
 
     // Both should succeed since we validated
     if (PrologueInserted && EpilogueInserted) {
       LLVM_DEBUG(dbgs() << "Successfully inserted both conditional barriers\n");
+      if (BarriersDuplicated) {
+        LLVM_DEBUG(dbgs() << "Successfully duplicated barriers in loop body\n");
+      }
       Changed = true;
     } else {
       LLVM_DEBUG(dbgs() << "ERROR: Insertion failed after validation!\n");
@@ -418,6 +425,60 @@ bool AMDGPUInsertCondBarriers::insertCondBarrierEpilogue(
 
     LLVM_DEBUG(dbgs() << "Inserted conditional barrier epilogue\n");
     Changed = true;
+  }
+
+  return Changed;
+}
+
+bool AMDGPUInsertCondBarriers::duplicateBarriersInLoopBody(MachineLoop *ML) {
+  MachineFunction *MF = ML->getHeader()->getParent();
+  const GCNSubtarget &ST = MF->getSubtarget<GCNSubtarget>();
+  const SIInstrInfo *TII = ST.getInstrInfo();
+
+  bool Changed = false;
+
+  // Collect all S_BARRIER instructions in the loop body that already have S_WAITCNT before them
+  SmallVector<MachineInstr *, 4> BarriersWithWaitcnt;
+
+  for (MachineBasicBlock *MBB : ML->blocks()) {
+    for (MachineInstr &MI : *MBB) {
+      if (MI.getOpcode() == AMDGPU::S_BARRIER) {
+        // Check if there's an S_WAITCNT immediately before this S_BARRIER
+        MachineBasicBlock::iterator BarrierIt = MI.getIterator();
+        if (BarrierIt != MBB->begin()) {
+          MachineBasicBlock::iterator PrevIt = std::prev(BarrierIt);
+          if (PrevIt->getOpcode() == AMDGPU::S_WAITCNT) {
+            // Found S_BARRIER with S_WAITCNT before it - duplicate this pattern
+            BarriersWithWaitcnt.push_back(&MI);
+          }
+        }
+      }
+    }
+  }
+
+  // For each S_BARRIER that has S_WAITCNT before it, duplicate the entire pattern
+  for (MachineInstr *BarrierMI : BarriersWithWaitcnt) {
+    MachineBasicBlock *MBB = BarrierMI->getParent();
+    DebugLoc DL = BarrierMI->getDebugLoc();
+
+    // Get the S_WAITCNT instruction immediately before the barrier
+    MachineBasicBlock::iterator BarrierIt = BarrierMI->getIterator();
+    MachineBasicBlock::iterator WaitcntIt = std::prev(BarrierIt);
+    MachineInstr *WaitcntMI = &(*WaitcntIt);
+
+    // Find the position after the current S_BARRIER to insert the duplicate
+    MachineBasicBlock::iterator InsertPos = std::next(BarrierIt);
+
+    // Duplicate the S_WAITCNT followed by S_BARRIER pattern
+    // Copy the waitcnt value from the existing S_WAITCNT
+    unsigned WaitcntImm = WaitcntMI->getOperand(0).getImm();
+
+    BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_WAITCNT))
+        .addImm(WaitcntImm);
+    BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_BARRIER));
+
+    Changed = true;
+    LLVM_DEBUG(dbgs() << "Duplicated S_WAITCNT + S_BARRIER pattern in loop body\n");
   }
 
   return Changed;

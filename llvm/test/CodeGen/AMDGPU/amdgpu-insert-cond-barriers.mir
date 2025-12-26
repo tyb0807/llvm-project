@@ -15,6 +15,8 @@
   define amdgpu_kernel void @test_no_workitemidx() { ret void }
   define amdgpu_kernel void @test_custom_threshold() { ret void }
   define amdgpu_kernel void @test_multiple_loops() { ret void }
+  define amdgpu_kernel void @test_barrier_duplication() { ret void }
+  define amdgpu_kernel void @test_no_duplication_without_waitcnt() { ret void }
 ...
 
 ---
@@ -347,5 +349,118 @@ body: |
 # BASIC: %[[THREADID_SGPR_M4:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_M]](s32)
 # BASIC: %[[THRESHOLD4_M:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_LT_U32 %[[THREADID_SGPR_M4]], %[[THRESHOLD4_M]], implicit-def $scc
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
+
+---
+name: test_barrier_duplication
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    ; Loop with existing S_WAITCNT + S_BARRIER pattern in body
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter, 10, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.3, implicit $scc
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    ; Loop body with existing S_WAITCNT + S_BARRIER that should be duplicated
+    %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+    S_WAITCNT 49279
+    S_BARRIER
+    %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+    %loop_counter = COPY %incremented
+    S_BRANCH %bb.1
+
+  bb.3:
+    S_ENDPGM 0
+
+# BASIC-LABEL: name: test_barrier_duplication
+
+# Check that conditional barriers are inserted as usual
+# BASIC: %[[WORKITEMIDX_BD:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
+# BASIC: %[[THREADID_SGPR_BD1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_BD]](s32)
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
+
+# Check that the existing S_WAITCNT + S_BARRIER in loop body gets duplicated
+# BASIC: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+# BASIC-NEXT: S_WAITCNT 49279
+# BASIC-NEXT: S_BARRIER
+# BASIC-NEXT: S_WAITCNT 49279
+# BASIC-NEXT: S_BARRIER
+# BASIC: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+
+# Check epilogue barrier
+# BASIC: %[[THREADID_SGPR_BD2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_BD]](s32)
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
+
+---
+name: test_no_duplication_without_waitcnt
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    ; Loop with S_BARRIER but no preceding S_WAITCNT
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter, 10, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.3, implicit $scc
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    ; Loop body with standalone S_BARRIER (no S_WAITCNT before it)
+    %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+    S_BARRIER
+    %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+    %loop_counter = COPY %incremented
+    S_BRANCH %bb.1
+
+  bb.3:
+    S_ENDPGM 0
+
+# BASIC-LABEL: name: test_no_duplication_without_waitcnt
+
+# Check that conditional barriers are still inserted
+# BASIC: %[[WORKITEMIDX_ND:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
+# BASIC: S_WAITCNT {{[0-9]+}}
+# BASIC-NEXT: S_BARRIER
+
+# Check that the standalone S_BARRIER in loop body is NOT duplicated
+# BASIC: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+# BASIC-NEXT: S_BARRIER
+# BASIC-NOT: S_WAITCNT
+# BASIC: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+
+# Check epilogue barrier
 # BASIC: S_WAITCNT {{[0-9]+}}
 # BASIC-NEXT: S_BARRIER
