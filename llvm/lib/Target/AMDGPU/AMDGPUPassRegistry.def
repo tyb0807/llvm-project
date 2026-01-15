@@ -70,6 +70,7 @@ FUNCTION_PASS("amdgpu-promote-alloca-to-vector",
 FUNCTION_PASS("amdgpu-promote-kernel-arguments",
               AMDGPUPromoteKernelArgumentsPass())
 FUNCTION_PASS("amdgpu-rewrite-undef-for-phi", AMDGPURewriteUndefForPHIPass())
+FUNCTION_PASS("amdgpu-tdm-descriptor-phi", AMDGPUTDMDescriptorPHIPass())
 FUNCTION_PASS("amdgpu-simplifylib", AMDGPUSimplifyLibCallsPass())
 FUNCTION_PASS("amdgpu-unify-divergent-exit-nodes",
               AMDGPUUnifyDivergentExitNodesPass())

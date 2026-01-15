@@ -1386,6 +1386,10 @@ void AMDGPUPassConfig::addIRPasses() {
     // have expanded.
     if (TM.getOptLevel() > CodeGenOptLevel::Less)
       addPass(createLICMPass());
+
+    // Optimize TDM descriptor construction in loops using PHI nodes.
+    if (TM.getOptLevel() > CodeGenOptLevel::Less)
+      addPass(createAMDGPUTDMDescriptorPHIPass());
   }
 
   TargetPassConfig::addIRPasses();

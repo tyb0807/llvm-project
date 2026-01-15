@@ -67,6 +67,7 @@ FunctionPass *createSIModeRegisterPass();
 FunctionPass *createGCNPreRAOptimizationsLegacyPass();
 FunctionPass *createAMDGPUPreloadKernArgPrologLegacyPass();
 ModulePass *createAMDGPUPreloadKernelArgumentsLegacyPass(const TargetMachine *);
+FunctionPass *createAMDGPUTDMDescriptorPHIPass();
 
 struct AMDGPUSimplifyLibCallsPass : PassInfoMixin<AMDGPUSimplifyLibCallsPass> {
   AMDGPUSimplifyLibCallsPass() = default;
@@ -172,6 +173,16 @@ extern char &AMDGPUReserveWWMRegsLegacyID;
 
 void initializeAMDGPURewriteOutArgumentsPass(PassRegistry &);
 extern char &AMDGPURewriteOutArgumentsID;
+
+void initializeAMDGPUTDMDescriptorPHIPass(PassRegistry &);
+extern char &AMDGPUTDMDescriptorPHIID;
+
+class AMDGPUTDMDescriptorPHIPass
+    : public PassInfoMixin<AMDGPUTDMDescriptorPHIPass> {
+public:
+  AMDGPUTDMDescriptorPHIPass() = default;
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
+};
 
 void initializeGCNDPPCombineLegacyPass(PassRegistry &);
 extern char &GCNDPPCombineLegacyID;
