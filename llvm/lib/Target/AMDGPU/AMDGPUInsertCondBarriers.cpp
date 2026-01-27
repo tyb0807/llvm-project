@@ -74,6 +74,16 @@ private:
 
   // Helper to find workItemIDX register using SIMachineFunctionInfo
   unsigned findWorkItemIDXRegister(MachineFunction &MF);
+
+  // Helper to build conditional barrier sequence in BarrierBB
+  // Creates DoBarrierBB with S_WAITCNT + S_BARRIER, and conditional branch logic
+  // CmpOpcode: S_CMP_GE_U32 for prologue, S_CMP_LT_U32 for epilogue
+  // SkipBB: target when condition is false (skip barrier)
+  // FallThroughBB: target after executing barrier
+  MachineBasicBlock *buildCondBarrierSequence(
+      MachineBasicBlock *BarrierBB, MachineBasicBlock *SkipBB,
+      MachineBasicBlock *FallThroughBB, unsigned CmpOpcode,
+      const CondBarrierConfig &Config, const DebugLoc &DL);
 };
 
 char AMDGPUInsertCondBarriers::ID = 0;
@@ -212,14 +222,81 @@ unsigned AMDGPUInsertCondBarriers::findWorkItemIDXRegister(MachineFunction &MF) 
   return 0;
 }
 
-bool AMDGPUInsertCondBarriers::insertCondBarrierPrologue(
-    MachineLoop *ML, const CondBarrierConfig &Config) {
+MachineBasicBlock *AMDGPUInsertCondBarriers::buildCondBarrierSequence(
+    MachineBasicBlock *BarrierBB, MachineBasicBlock *SkipBB,
+    MachineBasicBlock *FallThroughBB, unsigned CmpOpcode,
+    const CondBarrierConfig &Config, const DebugLoc &DL) {
 
-  MachineFunction *MF = ML->getHeader()->getParent();
+  MachineFunction *MF = BarrierBB->getParent();
   const GCNSubtarget &ST = MF->getSubtarget<GCNSubtarget>();
   const SIInstrInfo *TII = ST.getInstrInfo();
   MachineRegisterInfo &MRI = MF->getRegInfo();
 
+  // Create separate basic block for executing the barrier
+  MachineBasicBlock *DoBarrierBB = MF->CreateMachineBasicBlock();
+  MF->insert(std::next(BarrierBB->getIterator()), DoBarrierBB);
+
+  unsigned CompareValReg = MRI.createVirtualRegister(&AMDGPU::SReg_32RegClass);
+
+  // Create SGPR to hold workItemIDX value converted from VGPR
+  // V_READFIRSTLANE_B32 requires its destination to be SReg_32_XM0
+  const MCInstrDesc &ReadFirstLaneDesc = TII->get(AMDGPU::V_READFIRSTLANE_B32);
+  const TargetRegisterClass *ThreadIdRC = TII->getRegClass(ReadFirstLaneDesc, 0);
+  unsigned ThreadIdSgpr = MRI.createVirtualRegister(ThreadIdRC);
+
+  // Copy VGPR workItemIDX to SGPR using V_READFIRSTLANE_B32
+  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::V_READFIRSTLANE_B32), ThreadIdSgpr)
+      .addReg(Config.ThreadIdReg);
+
+  // %compare_val = S_MOV_B32 <threshold>
+  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_MOV_B32), CompareValReg)
+      .addImm(Config.CompareValue);
+
+  // S_CMP_*_U32 %thread_id_sgpr, %compare_val  (sets SCC)
+  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(CmpOpcode))
+      .addReg(ThreadIdSgpr)
+      .addReg(CompareValReg);
+
+  // S_CBRANCH_SCC0 %skip_bb  (branch if condition false - skip barrier)
+  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_CBRANCH_SCC0))
+      .addMBB(SkipBB);
+
+  // S_BRANCH %DoBarrierBB  (branch to barrier block if condition true)
+  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
+      .addMBB(DoBarrierBB);
+
+  // DoBarrierBB: Execute memory barrier followed by synchronization barrier
+  // For MI350 (gfx950): use vmcnt(4) to wait until first buffer is filled,
+  //   with lgkmcnt(max) - don't wait for LDS/GDS
+  // For MI300 (gfx942) and others: use max vmcnt (don't wait for VM operations),
+  //   with lgkmcnt(0) - wait for all LDS/GDS
+  AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST.getCPU());
+  unsigned Vmcnt = ST.hasGFX950Insts() ? 4 : AMDGPU::getVmcntBitMask(IV);
+  unsigned ExpcntMax = AMDGPU::getExpcntBitMask(IV);
+  unsigned Lgkmcnt = ST.hasGFX950Insts() ? AMDGPU::getLgkmcntBitMask(IV) : 0;
+  unsigned WaitcntImm = AMDGPU::encodeWaitcnt(IV, Vmcnt, ExpcntMax, Lgkmcnt);
+  // For MI350 (gfx950), set unused bits [13:12] and [7] to 1 for consistency
+  if (ST.hasGFX950Insts())
+    WaitcntImm |= 0x3080;
+  BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_WAITCNT))
+      .addImm(WaitcntImm);
+  BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BARRIER));
+  BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
+      .addMBB(FallThroughBB);
+
+  // Set up CFG edges (SkipBB might already be a successor if reusing preheader)
+  if (!BarrierBB->isSuccessor(SkipBB))
+    BarrierBB->addSuccessor(SkipBB);
+  BarrierBB->addSuccessor(DoBarrierBB);
+  DoBarrierBB->addSuccessor(FallThroughBB);
+
+  return DoBarrierBB;
+}
+
+bool AMDGPUInsertCondBarriers::insertCondBarrierPrologue(
+    MachineLoop *ML, const CondBarrierConfig &Config) {
+
+  MachineFunction *MF = ML->getHeader()->getParent();
   MachineBasicBlock *Header = ML->getHeader();
   MachineBasicBlock *Preheader = ML->getLoopPreheader();
   DebugLoc DL = Header->begin() != Header->end() ? Header->begin()->getDebugLoc() : DebugLoc();
@@ -253,67 +330,9 @@ bool AMDGPUInsertCondBarriers::insertCondBarrierPrologue(
     }
   }
 
-  // Generate conditional barrier sequence using separate basic blocks
-  // to avoid having non-terminator instructions after terminators
-
-  // Create separate basic block for executing the barrier
-  MachineBasicBlock *DoBarrierBB = MF->CreateMachineBasicBlock();
-  MF->insert(std::next(BarrierBB->getIterator()), DoBarrierBB);
-
-  unsigned CompareValReg = MRI.createVirtualRegister(&AMDGPU::SReg_32RegClass);
-
-  // Create SGPR to hold workItemIDX value converted from VGPR
-  // V_READFIRSTLANE_B32 requires its destination to be SReg_32_XM0 (excludes M0 register)
-  // Use getRegClass to query the correct register class from instruction descriptor
-  const MCInstrDesc &ReadFirstLaneDesc = TII->get(AMDGPU::V_READFIRSTLANE_B32);
-  const TargetRegisterClass *ThreadIdRC = TII->getRegClass(ReadFirstLaneDesc, 0);
-  unsigned ThreadIdSgpr = MRI.createVirtualRegister(ThreadIdRC);
-
-  // Copy VGPR workItemIDX to SGPR using V_READFIRSTLANE_B32
-  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::V_READFIRSTLANE_B32), ThreadIdSgpr)
-      .addReg(Config.ThreadIdReg);
-
-  // %compare_val = S_MOV_B32 <threshold>
-  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_MOV_B32), CompareValReg)
-      .addImm(Config.CompareValue);
-
-  // S_CMP_GE_U32 %thread_id_sgpr, %compare_val  (sets SCC)
-  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_CMP_GE_U32))
-      .addReg(ThreadIdSgpr)
-      .addReg(CompareValReg);
-
-  // S_CBRANCH_SCC0 %header  (branch if condition false - skip barrier)
-  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_CBRANCH_SCC0))
-      .addMBB(Header);
-
-  // S_BRANCH %DoBarrierBB  (branch to barrier block if condition true)
-  BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
-      .addMBB(DoBarrierBB);
-
-  // DoBarrierBB: Execute memory barrier followed by synchronization barrier
-  // Create S_WAITCNT for LDS/GDS operations before barrier
-  AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST.getCPU());
-  // Use max values for vmcnt/expcnt (don't wait), 0 for lgkmcnt (wait for all LDS/GDS)
-  unsigned VmcntMax = AMDGPU::getVmcntBitMask(IV);
-  unsigned ExpcntMax = AMDGPU::getExpcntBitMask(IV);
-  unsigned WaitcntImm = AMDGPU::encodeWaitcnt(IV, VmcntMax, ExpcntMax, 0);
-  BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_WAITCNT))
-      .addImm(WaitcntImm);
-  BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BARRIER));
-  BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
-      .addMBB(Header);
-
-  // Explicitly manage CFG relationships
-  if (Preheader) {
-    // When using existing preheader, it already has CFG edge to Header from original terminator
-    // We only need to add the new edge to DoBarrierBB for our unconditional branch
-    BarrierBB->addSuccessor(DoBarrierBB); // S_BRANCH target (new edge)
-  } else {
-    // When we created a new BarrierBB, set up both successors
-    BarrierBB->addSuccessor(Header);     // S_CBRANCH_SCC0 target
-    BarrierBB->addSuccessor(DoBarrierBB); // S_BRANCH target
-  }
-  DoBarrierBB->addSuccessor(Header);
+  // Build conditional barrier sequence: S_CMP_GE_U32 for prologue
+  // SkipBB = Header (skip barrier and go to loop), FallThroughBB = Header (after barrier)
+  buildCondBarrierSequence(BarrierBB, Header, Header, AMDGPU::S_CMP_GE_U32, Config, DL);
 
   LLVM_DEBUG(dbgs() << "Inserted conditional barrier prologue\n");
   return true;
@@ -323,9 +342,6 @@ bool AMDGPUInsertCondBarriers::insertCondBarrierEpilogue(
     MachineLoop *ML, const CondBarrierConfig &Config) {
 
   MachineFunction *MF = ML->getHeader()->getParent();
-  const GCNSubtarget &ST = MF->getSubtarget<GCNSubtarget>();
-  const SIInstrInfo *TII = ST.getInstrInfo();
-  MachineRegisterInfo &MRI = MF->getRegInfo();
 
   // Find loop exit blocks
   SmallVector<MachineBasicBlock *, 4> ExitBlocks;
@@ -349,61 +365,9 @@ bool AMDGPUInsertCondBarriers::insertCondBarrierEpilogue(
 
     DebugLoc DL = ExitBB->begin() != ExitBB->end() ? ExitBB->begin()->getDebugLoc() : DebugLoc();
 
-    // Generate conditional barrier sequence using separate basic blocks
-    // to avoid having non-terminator instructions after terminators
-
-    // Create separate basic block for executing the barrier
-    MachineBasicBlock *DoBarrierBB = MF->CreateMachineBasicBlock();
-    MF->insert(std::next(BarrierBB->getIterator()), DoBarrierBB);
-
-    unsigned CompareValReg = MRI.createVirtualRegister(&AMDGPU::SReg_32RegClass);
-
-    // Create SGPR to hold workItemIDX value converted from VGPR
-    // V_READFIRSTLANE_B32 requires its destination to be SReg_32_XM0 (excludes M0 register)
-    // Use getRegClass to query the correct register class from instruction descriptor
-    const MCInstrDesc &ReadFirstLaneDesc = TII->get(AMDGPU::V_READFIRSTLANE_B32);
-    const TargetRegisterClass *ThreadIdRC = TII->getRegClass(ReadFirstLaneDesc, 0);
-    unsigned ThreadIdSgpr = MRI.createVirtualRegister(ThreadIdRC);
-
-    // Copy VGPR workItemIDX to SGPR using V_READFIRSTLANE_B32
-    BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::V_READFIRSTLANE_B32), ThreadIdSgpr)
-        .addReg(Config.ThreadIdReg);
-
-    // %compare_val = S_MOV_B32 <threshold>
-    BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_MOV_B32), CompareValReg)
-        .addImm(Config.CompareValue);
-
-    // S_CMP_LT_U32 %thread_id_sgpr, %compare_val  (sets SCC)
-    BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_CMP_LT_U32))
-        .addReg(ThreadIdSgpr)
-        .addReg(CompareValReg);
-
-    // S_CBRANCH_SCC0 %exit_bb  (branch if condition false - skip barrier)
-    BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_CBRANCH_SCC0))
-        .addMBB(ExitBB);
-
-    // S_BRANCH %DoBarrierBB  (branch to barrier block if condition true)
-    BuildMI(*BarrierBB, BarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
-        .addMBB(DoBarrierBB);
-
-    // DoBarrierBB: Execute memory barrier followed by synchronization barrier
-    // Create S_WAITCNT for LDS/GDS operations before barrier
-    AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST.getCPU());
-    // Use max values for vmcnt/expcnt (don't wait), 0 for lgkmcnt (wait for all LDS/GDS)
-    unsigned VmcntMax = AMDGPU::getVmcntBitMask(IV);
-    unsigned ExpcntMax = AMDGPU::getExpcntBitMask(IV);
-    unsigned WaitcntImm = AMDGPU::encodeWaitcnt(IV, VmcntMax, ExpcntMax, 0);
-    BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_WAITCNT))
-        .addImm(WaitcntImm);
-    BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BARRIER));
-    BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL, TII->get(AMDGPU::S_BRANCH))
-        .addMBB(ExitBB);
-
-    // Explicitly manage CFG relationships since BuildMI may not auto-update for new blocks
-    // BarrierBB successors: ExitBB (conditional), DoBarrierBB (unconditional)
-    BarrierBB->addSuccessor(ExitBB);  // conditional branch target
-    BarrierBB->addSuccessor(DoBarrierBB);  // unconditional branch target
-    DoBarrierBB->addSuccessor(ExitBB);
+    // Build conditional barrier sequence: S_CMP_LT_U32 for epilogue
+    // SkipBB = ExitBB (skip barrier and exit), FallThroughBB = ExitBB (after barrier)
+    buildCondBarrierSequence(BarrierBB, ExitBB, ExitBB, AMDGPU::S_CMP_LT_U32, Config, DL);
 
     // Redirect all predecessors of ExitBB (that are in the loop) to BarrierBB
     // Use the predecessors we collected before modifying the CFG

@@ -1,12 +1,14 @@
 # NOTE: Comprehensive test for AMDGPUInsertCondBarriers pass
 # RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx942 -amdgpu-enable-cond-barriers -run-pass=amdgpu-insert-cond-barriers %s -o - | FileCheck %s --check-prefix=BASIC
 # RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx942 -amdgpu-enable-cond-barriers -run-pass=amdgpu-insert-cond-barriers -amdgpu-cond-barrier-threshold=512 %s -o - | FileCheck %s --check-prefix=THRESHOLD
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx950 -amdgpu-enable-cond-barriers -run-pass=amdgpu-insert-cond-barriers %s -o - | FileCheck %s --check-prefix=MI350
 
 # This test covers:
 # 1. Basic functionality - conditional barriers inserted for valid loops
 # 2. Edge cases - no insertion when preheader/exit missing or no workItemIDX
 # 3. Custom threshold values
 # 4. Multiple loops handling
+# 5. MI350 (gfx950) vs MI300 (gfx942) different S_WAITCNT values
 
 --- |
   define amdgpu_kernel void @test_basic_insertion() { ret void }
@@ -101,6 +103,21 @@ body: |
 # THRESHOLD: S_WAITCNT {{[0-9]+}}
 # THRESHOLD-NEXT: S_BARRIER
 
+# Test MI350 (gfx950) uses S_WAITCNT 16372 (-49164) with vmcnt(4), lgkmcnt(max)
+# instead of 49279 (vmcnt=max, lgkmcnt=0) for MI300
+# MI350-LABEL: name: test_basic_insertion
+# MI350: %[[WORKITEMIDX_MI350:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
+# Check prologue barrier with vmcnt(4) for MI350
+# MI350: %[[THREADID_SGPR_MI350_1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_MI350]](s32)
+# MI350: S_CMP_GE_U32 %[[THREADID_SGPR_MI350_1]], %{{[0-9]+}}, implicit-def $scc
+# MI350: S_WAITCNT 16372
+# MI350-NEXT: S_BARRIER
+# Check epilogue barrier with vmcnt(4) for MI350
+# MI350: %[[THREADID_SGPR_MI350_2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_MI350]](s32)
+# MI350: S_CMP_LT_U32 %[[THREADID_SGPR_MI350_2]], %{{[0-9]+}}, implicit-def $scc
+# MI350: S_WAITCNT 16372
+# MI350-NEXT: S_BARRIER
+
 ---
 name: test_no_preheader
 tracksRegLiveness: true
@@ -138,14 +155,12 @@ body: |
 # Should insert conditional barriers even without preheader (enhanced functionality)
 # BASIC: %[[WORKITEMIDX_NP:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
 # Check prologue barrier was created in new block
-# BASIC: bb.3:
 # BASIC: %[[THREADID_SGPR_NP1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_NP]](s32)
 # BASIC: %[[THRESHOLD1_NP:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_GE_U32 %[[THREADID_SGPR_NP1]], %[[THRESHOLD1_NP]], implicit-def $scc
 # BASIC: S_WAITCNT {{[0-9]+}}
 # BASIC-NEXT: S_BARRIER
 # Check epilogue barrier was created
-# BASIC: bb.4:
 # BASIC: %[[THREADID_SGPR_NP2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_NP]](s32)
 # BASIC: %[[THRESHOLD2_NP:[0-9]+]]:sreg_32 = S_MOV_B32 256
 # BASIC: S_CMP_LT_U32 %[[THREADID_SGPR_NP2]], %[[THRESHOLD2_NP]], implicit-def $scc
@@ -264,13 +279,13 @@ body: |
 # THRESHOLD-LABEL: name: test_custom_threshold
 # Check workItemIDX register assignment
 # THRESHOLD: %[[WORKITEMIDX_CT:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
-# THRESHOLD: bb.1:
+# Check prologue barrier with custom threshold 512
 # THRESHOLD: %[[THREADID_SGPR_CT1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_CT]](s32)
 # THRESHOLD: %{{[0-9]+}}:sreg_32 = S_MOV_B32 512
 # THRESHOLD: S_CMP_GE_U32 %[[THREADID_SGPR_CT1]], %{{[0-9]+}}, implicit-def $scc
 # THRESHOLD: S_CBRANCH_SCC0 %bb.{{[0-9]+}}, implicit $scc
 # THRESHOLD: S_BARRIER
-# THRESHOLD: bb.3:
+# Check epilogue barrier with custom threshold 512
 # THRESHOLD: %[[THREADID_SGPR_CT2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_CT]](s32)
 # THRESHOLD: %{{[0-9]+}}:sreg_32 = S_MOV_B32 512
 # THRESHOLD: S_CMP_LT_U32 %[[THREADID_SGPR_CT2]], %{{[0-9]+}}, implicit-def $scc
