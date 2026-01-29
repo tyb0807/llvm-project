@@ -414,6 +414,7 @@ body: |
 # BASIC-NEXT: S_BARRIER
 
 # Check that the existing S_WAITCNT + S_BARRIER in loop body gets duplicated
+# For MI300 (gfx942): both S_WAITCNT and S_BARRIER are duplicated
 # BASIC: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
 # BASIC-NEXT: S_WAITCNT 49279
 # BASIC-NEXT: S_BARRIER
@@ -425,6 +426,24 @@ body: |
 # BASIC: %[[THREADID_SGPR_BD2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_BD]](s32)
 # BASIC: S_WAITCNT {{[0-9]+}}
 # BASIC-NEXT: S_BARRIER
+
+# MI350-LABEL: name: test_barrier_duplication
+# For MI350 (gfx950): S_WAITCNT is updated to vmcnt(0) = 16368, only S_BARRIER is duplicated
+# Check conditional prologue barrier still uses vmcnt(4) = 16372
+# MI350: S_WAITCNT 16372
+# MI350-NEXT: S_BARRIER
+
+# Check that the existing S_WAITCNT in loop body is updated to vmcnt(0) = 16368
+# and only S_BARRIER is duplicated (not S_WAITCNT)
+# MI350: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+# MI350-NEXT: S_WAITCNT 16368
+# MI350-NEXT: S_BARRIER
+# MI350-NEXT: S_BARRIER
+# MI350: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+
+# Check conditional epilogue barrier still uses vmcnt(4) = 16372
+# MI350: S_WAITCNT 16372
+# MI350-NEXT: S_BARRIER
 
 ---
 name: test_no_duplication_without_waitcnt
@@ -479,3 +498,19 @@ body: |
 # Check epilogue barrier
 # BASIC: S_WAITCNT {{[0-9]+}}
 # BASIC-NEXT: S_BARRIER
+
+# MI350-LABEL: name: test_no_duplication_without_waitcnt
+# For MI350, standalone S_BARRIER (without preceding S_WAITCNT) should NOT be duplicated
+# Check that conditional barriers are still inserted with vmcnt(4) = 16372
+# MI350: S_WAITCNT 16372
+# MI350-NEXT: S_BARRIER
+
+# Check that the standalone S_BARRIER in loop body is NOT duplicated
+# MI350: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+# MI350-NEXT: S_BARRIER
+# MI350-NOT: S_BARRIER
+# MI350: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+
+# Check epilogue barrier
+# MI350: S_WAITCNT 16372
+# MI350-NEXT: S_BARRIER
