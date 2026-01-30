@@ -401,67 +401,80 @@ bool AMDGPUInsertCondBarriers::duplicateBarriersInLoopBody(MachineLoop *ML) {
 
   bool Changed = false;
 
-  // For MI350 (gfx950), compute vmcnt(0) waitcnt value for main loop barriers
-  // Conditional barriers still use vmcnt(4), but main loop barriers use vmcnt(0)
+  // For MI350 (gfx950), compute waitcnt values
+  // vmcnt(4) = 16372 is what we look for, vmcnt(0) = 16368 is what we change to
   AMDGPU::IsaVersion IV = AMDGPU::getIsaVersion(ST.getCPU());
+  unsigned Vmcnt4WaitcntImm = 0;
   unsigned Vmcnt0WaitcntImm = 0;
   if (ST.hasGFX950Insts()) {
     unsigned ExpcntMax = AMDGPU::getExpcntBitMask(IV);
     unsigned LgkmcntMax = AMDGPU::getLgkmcntBitMask(IV);
+    Vmcnt4WaitcntImm = AMDGPU::encodeWaitcnt(IV, 4, ExpcntMax, LgkmcntMax);
+    Vmcnt4WaitcntImm |= 0x3080;
     Vmcnt0WaitcntImm = AMDGPU::encodeWaitcnt(IV, 0, ExpcntMax, LgkmcntMax);
-    // Set unused bits [13:12] and [7] to 1 for consistency
     Vmcnt0WaitcntImm |= 0x3080;
   }
 
-  // Collect all S_BARRIER instructions in the loop body that already have S_WAITCNT before them
-  SmallVector<MachineInstr *, 4> BarriersWithWaitcnt;
+  // Collect all S_BARRIER instructions in the loop body
+  SmallVector<MachineInstr *, 4> Barriers;
 
   for (MachineBasicBlock *MBB : ML->blocks()) {
     for (MachineInstr &MI : *MBB) {
       if (MI.getOpcode() == AMDGPU::S_BARRIER) {
-        // Check if there's an S_WAITCNT immediately before this S_BARRIER
-        MachineBasicBlock::iterator BarrierIt = MI.getIterator();
-        if (BarrierIt != MBB->begin()) {
-          MachineBasicBlock::iterator PrevIt = std::prev(BarrierIt);
-          if (PrevIt->getOpcode() == AMDGPU::S_WAITCNT) {
-            // Found S_BARRIER with S_WAITCNT before it - process this pattern
-            BarriersWithWaitcnt.push_back(&MI);
-          }
-        }
+        Barriers.push_back(&MI);
       }
     }
   }
 
-  // For each S_BARRIER that has S_WAITCNT before it:
-  // - For MI350: update S_WAITCNT to vmcnt(0) and duplicate S_BARRIER
-  // - For others: duplicate the S_WAITCNT + S_BARRIER pattern
-  for (MachineInstr *BarrierMI : BarriersWithWaitcnt) {
+  // Process each S_BARRIER
+  for (MachineInstr *BarrierMI : Barriers) {
     MachineBasicBlock *MBB = BarrierMI->getParent();
     DebugLoc DL = BarrierMI->getDebugLoc();
-
-    // Get the S_WAITCNT instruction immediately before the barrier
     MachineBasicBlock::iterator BarrierIt = BarrierMI->getIterator();
-    MachineBasicBlock::iterator WaitcntIt = std::prev(BarrierIt);
-    MachineInstr *WaitcntMI = &(*WaitcntIt);
 
     // Find the position after the current S_BARRIER to insert the duplicate
     MachineBasicBlock::iterator InsertPos = std::next(BarrierIt);
 
     if (ST.hasGFX950Insts()) {
-      // MI350: Update existing S_WAITCNT to vmcnt(0) and duplicate only S_BARRIER
-      WaitcntMI->getOperand(0).setImm(Vmcnt0WaitcntImm);
-      BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_BARRIER));
-      LLVM_DEBUG(dbgs() << "Updated S_WAITCNT to vmcnt(0) and duplicated S_BARRIER in loop body\n");
-    } else {
-      // Other targets: duplicate the S_WAITCNT + S_BARRIER pattern
-      unsigned WaitcntImm = WaitcntMI->getOperand(0).getImm();
-      BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_WAITCNT))
-          .addImm(WaitcntImm);
-      BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_BARRIER));
-      LLVM_DEBUG(dbgs() << "Duplicated S_WAITCNT + S_BARRIER pattern in loop body\n");
-    }
+      // MI350: Find S_WAITCNT with vmcnt(4) before the barrier and change to vmcnt(0)
+      // Search backwards from the barrier to find S_WAITCNT with vmcnt(4) value
+      MachineInstr *Vmcnt4WaitcntMI = nullptr;
+      for (auto It = BarrierIt; It != MBB->begin(); ) {
+        --It;
+        if (It->getOpcode() == AMDGPU::S_WAITCNT) {
+          int64_t WaitcntVal = It->getOperand(0).getImm();
+          // Check if this is vmcnt(4) - compare lower 16 bits
+          if ((WaitcntVal & 0xFFFF) == (Vmcnt4WaitcntImm & 0xFFFF)) {
+            Vmcnt4WaitcntMI = &(*It);
+            break;
+          }
+        }
+        // Stop if we hit a non-waitcnt instruction that's not another S_WAITCNT
+        if (It->getOpcode() != AMDGPU::S_WAITCNT)
+          break;
+      }
 
-    Changed = true;
+      if (Vmcnt4WaitcntMI) {
+        // Found vmcnt(4), change it to vmcnt(0) and duplicate S_BARRIER
+        Vmcnt4WaitcntMI->getOperand(0).setImm(Vmcnt0WaitcntImm);
+        BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_BARRIER));
+        Changed = true;
+        LLVM_DEBUG(dbgs() << "Updated S_WAITCNT from vmcnt(4) to vmcnt(0) and duplicated S_BARRIER in loop body\n");
+      }
+    } else {
+      // Other targets: duplicate the S_WAITCNT + S_BARRIER pattern if S_WAITCNT exists
+      if (BarrierIt != MBB->begin()) {
+        MachineBasicBlock::iterator PrevIt = std::prev(BarrierIt);
+        if (PrevIt->getOpcode() == AMDGPU::S_WAITCNT) {
+          unsigned WaitcntImm = PrevIt->getOperand(0).getImm();
+          BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_WAITCNT))
+              .addImm(WaitcntImm);
+          BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_BARRIER));
+          Changed = true;
+          LLVM_DEBUG(dbgs() << "Duplicated S_WAITCNT + S_BARRIER pattern in loop body\n");
+        }
+      }
+    }
   }
 
   return Changed;

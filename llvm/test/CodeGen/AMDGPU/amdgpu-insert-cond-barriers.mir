@@ -18,6 +18,7 @@
   define amdgpu_kernel void @test_custom_threshold() { ret void }
   define amdgpu_kernel void @test_multiple_loops() { ret void }
   define amdgpu_kernel void @test_barrier_duplication() { ret void }
+  define amdgpu_kernel void @test_mi350_barrier_duplication() { ret void }
   define amdgpu_kernel void @test_no_duplication_without_waitcnt() { ret void }
 ...
 
@@ -427,16 +428,69 @@ body: |
 # BASIC: S_WAITCNT {{[0-9]+}}
 # BASIC-NEXT: S_BARRIER
 
+# For this test, the input doesn't have vmcnt(4) S_WAITCNT, so nothing is modified in loop body for MI350
 # MI350-LABEL: name: test_barrier_duplication
-# For MI350 (gfx950): S_WAITCNT is updated to vmcnt(0) = 16368, only S_BARRIER is duplicated
-# Check conditional prologue barrier still uses vmcnt(4) = 16372
+# Conditional prologue barrier uses vmcnt(4) = 16372
+# MI350: S_WAITCNT 16372
+# MI350-NEXT: S_BARRIER
+# The loop body S_WAITCNT 49279 is NOT vmcnt(4), so it's left unchanged and no duplication
+# MI350: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+# MI350-NEXT: S_WAITCNT 49279
+# MI350-NEXT: S_BARRIER
+# MI350: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+
+---
+name: test_mi350_barrier_duplication
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    ; Loop with MI350 pattern: S_WAITCNT vmcnt(4) followed by another S_WAITCNT and S_BARRIER
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter, 10, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.3, implicit $scc
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    ; Loop body with MI350 pattern: S_WAITCNT 16372 (vmcnt(4)), S_WAITCNT 49279, S_BARRIER
+    %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+    S_WAITCNT 16372
+    S_WAITCNT 49279
+    S_BARRIER
+    %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+    %loop_counter = COPY %incremented
+    S_BRANCH %bb.1
+
+  bb.3:
+    S_ENDPGM 0
+
+# MI350-LABEL: name: test_mi350_barrier_duplication
+# For MI350 (gfx950): S_WAITCNT with vmcnt(4)=16372 is updated to vmcnt(0)=16368
+# The other S_WAITCNT 49279 is left unchanged, and S_BARRIER is duplicated
+
+# Check conditional prologue barrier uses vmcnt(4) = 16372
 # MI350: S_WAITCNT 16372
 # MI350-NEXT: S_BARRIER
 
-# Check that the existing S_WAITCNT in loop body is updated to vmcnt(0) = 16368
-# and only S_BARRIER is duplicated (not S_WAITCNT)
+# Check that the vmcnt(4) S_WAITCNT in loop body is updated to vmcnt(0) = 16368
+# and the other S_WAITCNT 49279 is left unchanged, S_BARRIER is duplicated
 # MI350: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
 # MI350-NEXT: S_WAITCNT 16368
+# MI350-NEXT: S_WAITCNT 49279
 # MI350-NEXT: S_BARRIER
 # MI350-NEXT: S_BARRIER
 # MI350: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
