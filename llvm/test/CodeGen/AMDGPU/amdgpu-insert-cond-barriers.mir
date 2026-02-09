@@ -2,6 +2,7 @@
 # RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx942 -amdgpu-enable-cond-barriers -run-pass=amdgpu-insert-cond-barriers %s -o - | FileCheck %s --check-prefix=BASIC
 # RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx942 -amdgpu-enable-cond-barriers -run-pass=amdgpu-insert-cond-barriers -amdgpu-cond-barrier-threshold=512 %s -o - | FileCheck %s --check-prefix=THRESHOLD
 # RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx950 -amdgpu-enable-cond-barriers -run-pass=amdgpu-insert-cond-barriers %s -o - | FileCheck %s --check-prefix=MI350
+# RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx1250 -amdgpu-enable-cond-barriers -run-pass=amdgpu-insert-cond-barriers %s -o - | FileCheck %s --check-prefix=MI450
 
 # This test covers:
 # 1. Basic functionality - conditional barriers inserted for valid loops
@@ -9,6 +10,7 @@
 # 3. Custom threshold values
 # 4. Multiple loops handling
 # 5. MI350 (gfx950) vs MI300 (gfx942) different S_WAITCNT values
+# 6. MI450 (gfx1250) split barrier signal/wait pattern
 
 --- |
   define amdgpu_kernel void @test_basic_insertion() { ret void }
@@ -19,6 +21,8 @@
   define amdgpu_kernel void @test_multiple_loops() { ret void }
   define amdgpu_kernel void @test_barrier_duplication() { ret void }
   define amdgpu_kernel void @test_mi350_barrier_duplication() { ret void }
+  define amdgpu_kernel void @test_mi450_barrier_duplication() { ret void }
+  define amdgpu_kernel void @test_mi450_no_duplication_without_wait() { ret void }
   define amdgpu_kernel void @test_no_duplication_without_waitcnt() { ret void }
 ...
 
@@ -118,6 +122,25 @@ body: |
 # MI350: S_CMP_LT_U32 %[[THREADID_SGPR_MI350_2]], %{{[0-9]+}}, implicit-def $scc
 # MI350: S_WAITCNT 16372
 # MI350-NEXT: S_BARRIER
+
+# Test MI450 (gfx1250) uses S_BARRIER_SIGNAL_IMM + S_BARRIER_WAIT
+# instead of S_WAITCNT + S_BARRIER
+# MI450-LABEL: name: test_basic_insertion
+# MI450: %[[WORKITEMIDX_MI450:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
+# Check prologue barrier with split barrier for MI450
+# MI450: %[[THREADID_SGPR_MI450_1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_MI450]](s32)
+# MI450: S_CMP_GE_U32 %[[THREADID_SGPR_MI450_1]], %{{[0-9]+}}, implicit-def $scc
+# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
+# MI450-NEXT: S_BRANCH %bb.[[LOOP_HEADER_MI450:[0-9]+]]
+# Verify we branch to the actual loop header
+# MI450: bb.[[LOOP_HEADER_MI450]]:
+# MI450: %loop_counter:sgpr_32 = S_MOV_B32 0
+# Check epilogue barrier with split barrier for MI450
+# MI450: %[[THREADID_SGPR_MI450_2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_MI450]](s32)
+# MI450: S_CMP_LT_U32 %[[THREADID_SGPR_MI450_2]], %{{[0-9]+}}, implicit-def $scc
+# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
 
 ---
 name: test_no_preheader
@@ -439,6 +462,22 @@ body: |
 # MI350-NEXT: S_BARRIER
 # MI350: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
 
+# For MI450, the existing S_WAITCNT + S_BARRIER in loop body is NOT
+# recognized (pass looks for S_BARRIER_SIGNAL_IMM), so no duplication occurs.
+# MI450-LABEL: name: test_barrier_duplication
+# Check prologue uses split barrier
+# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
+# Check loop body is unchanged
+# MI450: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+# MI450-NEXT: S_WAITCNT 49279
+# MI450-NEXT: S_BARRIER
+# MI450-NOT: S_BARRIER_SIGNAL_IMM
+# MI450: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+# Check epilogue uses split barrier
+# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
+
 ---
 name: test_mi350_barrier_duplication
 tracksRegLiveness: true
@@ -498,6 +537,125 @@ body: |
 # Check conditional epilogue barrier still uses vmcnt(4) = 16372
 # MI350: S_WAITCNT 16372
 # MI350-NEXT: S_BARRIER
+
+---
+name: test_mi450_barrier_duplication
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    ; Loop with MI450 fence+barrier pattern in body
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter, 10, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.3, implicit $scc
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    ; Loop body with MI450 pattern: FENCE(acq) + SIGNAL + WAIT + FENCE(rel)
+    %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+    ATOMIC_FENCE 5, 2
+    S_BARRIER_SIGNAL_IMM -1
+    S_BARRIER_WAIT -1
+    ATOMIC_FENCE 4, 2
+    %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+    %loop_counter = COPY %incremented
+    S_BRANCH %bb.1
+
+  bb.3:
+    S_ENDPGM 0
+
+# MI450-LABEL: name: test_mi450_barrier_duplication
+# For MI450 (gfx1250): the fence+barrier pattern is detected and duplicated.
+# After duplication, expect: original pattern + S_WAIT_TENSORCNT 0 + duplicate pattern.
+
+# Check conditional prologue barrier uses split barrier
+# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
+
+# Check that the fence+barrier pattern in loop body gets duplicated
+# MI450: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+# MI450-NEXT: ATOMIC_FENCE 5, 2
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
+# MI450-NEXT: ATOMIC_FENCE 4, 2
+# MI450-NEXT: S_WAIT_TENSORCNT 0
+# MI450-NEXT: ATOMIC_FENCE 5, 2
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
+# MI450-NEXT: ATOMIC_FENCE 4, 2
+# MI450: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+
+# Check conditional epilogue barrier uses split barrier
+# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
+
+---
+name: test_mi450_no_duplication_without_wait
+tracksRegLiveness: true
+machineFunctionInfo:
+  isEntryFunction: true
+  argumentInfo:
+    kernargSegmentPtr: { reg: '$sgpr0_sgpr1' }
+    workGroupIDX:    { reg: '$sgpr2' }
+    workItemIDX:     { reg: '$vgpr0' }
+body: |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    liveins: $vgpr0, $sgpr0_sgpr1, $sgpr2
+    %463:sgpr_32 = COPY $sgpr2
+    %462:sgpr_64(p4) = COPY $sgpr0_sgpr1
+    %461:vgpr_32(s32) = COPY $vgpr0
+    S_BRANCH %bb.1
+
+  bb.1:
+    successors: %bb.2(0x40000000), %bb.3(0x40000000)
+    ; Loop with S_BARRIER_SIGNAL_IMM but no adjacent S_BARRIER_WAIT
+    %loop_counter:sgpr_32 = S_MOV_B32 0
+    S_CMP_LT_U32 %loop_counter, 10, implicit-def $scc
+    S_CBRANCH_SCC0 %bb.3, implicit $scc
+
+  bb.2:
+    successors: %bb.1(0x80000000)
+    ; Loop body with standalone S_BARRIER_SIGNAL_IMM (no S_BARRIER_WAIT following)
+    %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+    S_BARRIER_SIGNAL_IMM -1
+    %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+    %loop_counter = COPY %incremented
+    S_BRANCH %bb.1
+
+  bb.3:
+    S_ENDPGM 0
+
+# MI450-LABEL: name: test_mi450_no_duplication_without_wait
+# S_BARRIER_SIGNAL_IMM without adjacent S_BARRIER_WAIT should NOT be duplicated.
+
+# Check prologue conditional barrier still inserted
+# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
+
+# Check loop body: standalone S_BARRIER_SIGNAL_IMM not duplicated
+# MI450: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
+# MI450-NOT: S_BARRIER_SIGNAL_IMM
+# MI450: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
+
+# Check epilogue conditional barrier
+# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
 
 ---
 name: test_no_duplication_without_waitcnt
