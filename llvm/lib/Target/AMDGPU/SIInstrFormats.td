@@ -278,15 +278,15 @@ class SPseudoInstSI<dag outs, dag ins, list<dag> pattern = [], string asm = "">
 class VPseudoInstSI<dag outs, dag ins, list<dag> pattern = [], string asm = "">
   : PseudoInstSI<outs, ins, pattern, asm> {
   let VALU = 1;
-  let Uses = [EXEC];
+  let Uses = [EXEC_ByHwMode];
 }
 
 class CFPseudoInstSI<dag outs, dag ins, list<dag> pattern = [],
   bit UseExec = 0, bit DefExec = 0> :
   SPseudoInstSI<outs, ins, pattern> {
 
-  let Uses = !if(UseExec, [EXEC], []);
-  let Defs = !if(DefExec, [EXEC, SCC], [SCC]);
+  let Uses = !if(UseExec, [EXEC_ByHwMode], []);
+  let Defs = !if(DefExec, [EXEC_ByHwMode, SCC], [SCC]);
   let mayLoad = 0;
   let mayStore = 0;
   let hasSideEffects = 0;
@@ -541,7 +541,7 @@ class EXPe_Row : EXPe {
   let Inst{13} = row;
 }
 
-let Uses = [EXEC] in {
+let Uses = [EXEC_ByHwMode] in {
 
 class VINTRPCommon <dag outs, dag ins, string asm, list<dag> pattern> :
     InstSI <outs, ins, asm, pattern> {
@@ -563,4 +563,4 @@ class VINTRPCommon <dag outs, dag ins, string asm, list<dag> pattern> :
   let VALU = 1;
 }
 
-} // End Uses = [EXEC]
+} // End Uses = [EXEC_ByHwMode]

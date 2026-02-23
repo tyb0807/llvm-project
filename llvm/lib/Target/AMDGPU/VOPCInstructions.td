@@ -235,8 +235,8 @@ class VOPC_Pseudo <string opName, VOPC_Profile P, list<dag> pattern=[],
 
   let VALU = 1;
   let VOPC = 1;
-  let Uses = !if(ReadsModeReg, [MODE, EXEC], [EXEC]);
-  let Defs = !if(DefVcc, [VCC], []);
+  let Uses = !if(ReadsModeReg, [MODE, EXEC_ByHwMode], [EXEC_ByHwMode]);
+  let Defs = !if(DefVcc, [VCC_ByHwMode], []);
 
   VOPProfile Pfl = P;
 }
@@ -372,7 +372,7 @@ multiclass VOPC_Pseudos <string opName,
              Commutable_REV<revOp#"_e32", !eq(revOp, opName)>,
              VCMPXNoSDstTable<1, opName#"_e32">,
              VCMPVCMPXTable<opName#"_e32"> {
-    let Defs = !if(DefExec, [VCC, EXEC], [VCC]);
+    let Defs = !if(DefExec, [VCC_ByHwMode, EXEC_ByHwMode], [VCC_ByHwMode]);
     let SchedRW = P.Schedule;
     let isConvergent = DefExec;
     let isCompare = 1;
@@ -383,7 +383,7 @@ multiclass VOPC_Pseudos <string opName,
     Commutable_REV<revOp#"_e64", !eq(revOp, opName)>,
     VCMPXNoSDstTable<1, opName#"_e64">,
     VCMPVCMPXTable<opName#"_e64"> {
-    let Defs = !if(DefExec, [EXEC], []);
+    let Defs = !if(DefExec, [EXEC_ByHwMode], []);
     let SchedRW = P.Schedule;
     let isCompare = 1;
     let isCommutable = 1;
@@ -395,7 +395,7 @@ multiclass VOPC_Pseudos <string opName,
 
   if P.HasExtSDWA then
   def _sdwa : VOPC_SDWA_Pseudo <opName, P> {
-    let Defs = !if(DefExec, [EXEC], []);
+    let Defs = !if(DefExec, [EXEC_ByHwMode], []);
     let SchedRW = P.Schedule;
     let isConvergent = DefExec;
     let isCompare = 1;
@@ -404,7 +404,7 @@ multiclass VOPC_Pseudos <string opName,
   let SubtargetPredicate = isGFX11Plus in {
   if P.HasExtDPP then
       def _e32_dpp : VOP_DPP_Pseudo<opName, P> {
-        let Defs = !if(DefExec, [VCC, EXEC], [VCC]);
+        let Defs = !if(DefExec, [VCC_ByHwMode, EXEC_ByHwMode], [VCC_ByHwMode]);
         let SchedRW = P.Schedule;
         let isConvergent = DefExec;
         let isCompare = 1;
@@ -413,7 +413,7 @@ multiclass VOPC_Pseudos <string opName,
       }
   if P.HasExtVOP3DPP then
       def _e64_dpp : VOP3_DPP_Pseudo<opName, P> {
-        let Defs = !if(DefExec, [EXEC], []);
+        let Defs = !if(DefExec, [EXEC_ByHwMode], []);
         let SchedRW = P.Schedule;
         let isCompare = 1;
         let Constraints = "";
@@ -432,7 +432,7 @@ multiclass VOPCX_Pseudos <string opName,
              Commutable_REV<revOp#"_nosdst_e32", !eq(revOp, opName)>,
              VCMPXNoSDstTable<0, opName#"_e32">,
              VCMPVCMPXTable<!subst("v_cmpx", "v_cmp", opName#"_e32")> {
-    let Defs = [EXEC];
+    let Defs = [EXEC_ByHwMode];
     let SchedRW = P_NoSDst.Schedule;
     let isConvergent = 1;
     let isCompare = 1;
@@ -445,7 +445,7 @@ multiclass VOPCX_Pseudos <string opName,
     Commutable_REV<revOp#"_nosdst_e64", !eq(revOp, opName)>,
     VCMPXNoSDstTable<0, opName#"_e64">,
     VCMPVCMPXTable<!subst("v_cmpx", "v_cmp", opName#"_e64")> {
-    let Defs = [EXEC];
+    let Defs = [EXEC_ByHwMode];
     let SchedRW = P_NoSDst.Schedule;
     let isCompare = 1;
     let isCommutable = 1;
@@ -459,7 +459,7 @@ multiclass VOPCX_Pseudos <string opName,
 
   if P_NoSDst.HasExtSDWA then
   def _nosdst_sdwa : VOPC_SDWA_Pseudo <opName#"_nosdst", P_NoSDst> {
-    let Defs = [EXEC];
+    let Defs = [EXEC_ByHwMode];
     let SchedRW = P_NoSDst.Schedule;
     let isConvergent = 1;
     let isCompare = 1;
@@ -469,7 +469,7 @@ multiclass VOPCX_Pseudos <string opName,
   let SubtargetPredicate = isGFX11Plus in {
   if P.HasExtDPP then
       def _nosdst_e32_dpp : VOP_DPP_Pseudo<opName#"_nosdst", P_NoSDst> {
-        let Defs = [EXEC];
+        let Defs = [EXEC_ByHwMode];
         let SchedRW = P_NoSDst.Schedule;
         let isConvergent = 1;
         let isCompare = 1;
@@ -478,7 +478,7 @@ multiclass VOPCX_Pseudos <string opName,
       }
   if P.HasExtVOP3DPP then
       def _nosdst_e64_dpp : VOP3_DPP_Pseudo<opName#"_nosdst", P_NoSDst> {
-        let Defs = [EXEC];
+        let Defs = [EXEC_ByHwMode];
         let SchedRW = P_NoSDst.Schedule;
         let isCompare = 1;
         let Constraints = "";
@@ -1076,15 +1076,15 @@ multiclass VOPC_Class_Pseudos <string opName, VOPC_Profile p, bit DefExec,
                                bit DefVcc = 1> {
   def _e32 : VOPC_Pseudo <opName, p>,
              VCMPXNoSDstTable<1, opName#"_e32"> {
-    let Defs = !if(DefExec, !if(DefVcc, [VCC, EXEC], [EXEC]),
-                            !if(DefVcc, [VCC], []));
+    let Defs = !if(DefExec, !if(DefVcc, [VCC_ByHwMode, EXEC_ByHwMode], [EXEC_ByHwMode]),
+                            !if(DefVcc, [VCC_ByHwMode], []));
     let SchedRW = p.Schedule;
     let isConvergent = DefExec;
   }
 
   def _e64 : VOP3_Pseudo<opName, p, [], 0/*IsVOP3P*/, p.HasOpSel>,
              VCMPXNoSDstTable<1, opName#"_e64"> {
-    let Defs = !if(DefExec, [EXEC], []);
+    let Defs = !if(DefExec, [EXEC_ByHwMode], []);
     let SchedRW = p.Schedule;
     let AsmMatchConverter = !cond(
         p.HasOpSel : "cvtVOP3OpSel",
@@ -1094,8 +1094,8 @@ multiclass VOPC_Class_Pseudos <string opName, VOPC_Profile p, bit DefExec,
 
   if p.HasExtSDWA then
   def _sdwa : VOPC_SDWA_Pseudo <opName, p> {
-    let Defs = !if(DefExec, !if(DefVcc, [VCC, EXEC], [EXEC]),
-                            !if(DefVcc, [VCC], []));
+    let Defs = !if(DefExec, !if(DefVcc, [VCC_ByHwMode, EXEC_ByHwMode], [EXEC_ByHwMode]),
+                            !if(DefVcc, [VCC_ByHwMode], []));
     let SchedRW = p.Schedule;
     let isConvergent = DefExec;
   }
@@ -1103,8 +1103,8 @@ multiclass VOPC_Class_Pseudos <string opName, VOPC_Profile p, bit DefExec,
   let SubtargetPredicate = isGFX11Plus in {
   if p.HasExtDPP then
       def _e32_dpp : VOP_DPP_Pseudo<opName, p> {
-        let Defs = !if(DefExec, !if(DefVcc, [VCC, EXEC], [EXEC]),
-                                !if(DefVcc, [VCC], []));
+        let Defs = !if(DefExec, !if(DefVcc, [VCC_ByHwMode, EXEC_ByHwMode], [EXEC_ByHwMode]),
+                                !if(DefVcc, [VCC_ByHwMode], []));
         let SchedRW = p.Schedule;
         let isConvergent = DefExec;
         let VOPC = 1;
@@ -1112,7 +1112,7 @@ multiclass VOPC_Class_Pseudos <string opName, VOPC_Profile p, bit DefExec,
       }
   if p.HasExtVOP3DPP then
       def _e64_dpp : VOP3_DPP_Pseudo<opName, p> {
-        let Defs = !if(DefExec, [EXEC], []);
+        let Defs = !if(DefExec, [EXEC_ByHwMode], []);
         let SchedRW = p.Schedule;
         let Constraints = "";
     }
@@ -1126,7 +1126,7 @@ multiclass VOPCX_Class_Pseudos <string opName,
 
   def _nosdst_e32 : VOPC_Pseudo <opName#"_nosdst", P_NoSDst, [], 0>,
                     VCMPXNoSDstTable<0, opName#"_e32"> {
-    let Defs = [EXEC];
+    let Defs = [EXEC_ByHwMode];
     let SchedRW = P_NoSDst.Schedule;
     let isConvergent = 1;
     let SubtargetPredicate = HasNoSdstCMPX;
@@ -1134,7 +1134,7 @@ multiclass VOPCX_Class_Pseudos <string opName,
 
   def _nosdst_e64 : VOP3_Pseudo<opName#"_nosdst", P_NoSDst, [], 0/*IsVOP3P*/, P_NoSDst.HasOpSel>,
                     VCMPXNoSDstTable<0, opName#"_e64"> {
-    let Defs = [EXEC];
+    let Defs = [EXEC_ByHwMode];
     let SchedRW = P_NoSDst.Schedule;
     let SubtargetPredicate = HasNoSdstCMPX;
     let AsmMatchConverter = !cond(
@@ -1145,7 +1145,7 @@ multiclass VOPCX_Class_Pseudos <string opName,
 
   if P_NoSDst.HasExtSDWA then
   def _nosdst_sdwa : VOPC_SDWA_Pseudo <opName#"_nosdst", P_NoSDst> {
-    let Defs = [EXEC];
+    let Defs = [EXEC_ByHwMode];
     let SchedRW = P_NoSDst.Schedule;
     let isConvergent = 1;
     let SubtargetPredicate = HasNoSdstCMPX;
@@ -1154,7 +1154,7 @@ multiclass VOPCX_Class_Pseudos <string opName,
   let SubtargetPredicate = isGFX11Plus in {
   if P.HasExtDPP then
       def _nosdst_e32_dpp : VOP_DPP_Pseudo<opName#"_nosdst", P_NoSDst> {
-        let Defs = [EXEC];
+        let Defs = [EXEC_ByHwMode];
         let SchedRW = P_NoSDst.Schedule;
         let isConvergent = 1;
         let VOPC = 1;
@@ -1162,7 +1162,7 @@ multiclass VOPCX_Class_Pseudos <string opName,
       }
   if P.HasExtVOP3DPP then
       def _nosdst_e64_dpp : VOP3_DPP_Pseudo<opName#"_nosdst", P_NoSDst> {
-        let Defs = [EXEC];
+        let Defs = [EXEC_ByHwMode];
         let SchedRW = P_NoSDst.Schedule;
         let Constraints = "";
     }

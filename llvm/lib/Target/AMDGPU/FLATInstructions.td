@@ -79,7 +79,7 @@ class FLAT_Pseudo<string opName, dag outs, dag ins,
     !if(is_flat_scratch, HasFlatScratchInsts, HasFlatAddressSpace));
 
   // TODO: M0 if it could possibly access LDS (before gfx9? only)?
-  let Uses = !if(is_flat_global, [EXEC], [EXEC, FLAT_SCR]);
+  let Uses = !if(is_flat_global, [EXEC_ByHwMode], [EXEC_ByHwMode, FLAT_SCR]);
 
   // Internally, FLAT instruction are executed as both an LDS and a
   // Buffer instruction; so, they increment both VM_CNT and LGKM_CNT
@@ -412,7 +412,7 @@ class FLAT_Global_Load_LDS_Pseudo <string opName, bit EnableSaddr = 0, bit IsAsy
   let enabled_saddr = EnableSaddr;
   let VALU = 1;
   let PseudoInstr = opName#!if(EnableSaddr, "_SADDR", "");
-  let Uses = !if(IsAsync, [EXEC, ASYNCcnt], [M0, EXEC]);
+  let Uses = !if(IsAsync, [EXEC_ByHwMode, ASYNCcnt], [M0, EXEC_ByHwMode]);
   let Defs = !if(IsAsync, [ASYNCcnt], []);
   let SchedRW = [WriteVMEM, WriteLDS];
 }
@@ -442,7 +442,7 @@ class FLAT_Global_STORE_LDS_Pseudo <string opName, bit EnableSaddr = 0> : FLAT_P
   let has_saddr = 1;
   let enabled_saddr = EnableSaddr;
   let VALU = 1;
-  let Uses = [EXEC, ASYNCcnt];
+  let Uses = [EXEC_ByHwMode, ASYNCcnt];
   let Defs = [ASYNCcnt];
   let SchedRW = [WriteVMEM, WriteLDS];
 }
@@ -719,7 +719,7 @@ class FLAT_Scratch_Load_LDS_Pseudo <string opName, bit EnableSaddr = 0,
   let has_sve = EnableSVE;
   let sve = EnableVaddr;
   let VALU = 1;
-  let Uses = [M0, EXEC];
+  let Uses = [M0, EXEC_ByHwMode];
   let SchedRW = [WriteVMEM, WriteLDS];
 }
 
@@ -1237,12 +1237,12 @@ let SubtargetPredicate = isGFX12Plus in {
 
 let SubtargetPredicate = HasMcastLoadInsts in {
 
-let Uses = [M0, EXEC, ASYNCcnt], WaveSizePredicate = isWave32 in {
+let Uses = [M0, EXEC_ByHwMode, ASYNCcnt], WaveSizePredicate = isWave32 in {
 defm CLUSTER_LOAD_ASYNC_TO_LDS_B8      :  FLAT_Global_Load_LDS_Pseudo<"cluster_load_async_to_lds_b8",   1>;
 defm CLUSTER_LOAD_ASYNC_TO_LDS_B32     :  FLAT_Global_Load_LDS_Pseudo<"cluster_load_async_to_lds_b32",  1>;
 defm CLUSTER_LOAD_ASYNC_TO_LDS_B64     :  FLAT_Global_Load_LDS_Pseudo<"cluster_load_async_to_lds_b64",  1>;
 defm CLUSTER_LOAD_ASYNC_TO_LDS_B128    :  FLAT_Global_Load_LDS_Pseudo<"cluster_load_async_to_lds_b128", 1>;
-} // End Uses = [M0, EXEC, ASYNCcnt], WaveSizePredicate = isWave32
+} // End Uses = [M0, EXEC_ByHwMode, ASYNCcnt], WaveSizePredicate = isWave32
 defm GLOBAL_LOAD_ASYNC_TO_LDS_B8       :  FLAT_Global_Load_LDS_Pseudo<"global_load_async_to_lds_b8",    1>;
 defm GLOBAL_LOAD_ASYNC_TO_LDS_B32      :  FLAT_Global_Load_LDS_Pseudo<"global_load_async_to_lds_b32",   1>;
 defm GLOBAL_LOAD_ASYNC_TO_LDS_B64      :  FLAT_Global_Load_LDS_Pseudo<"global_load_async_to_lds_b64",   1>;
@@ -1301,19 +1301,19 @@ defm GLOBAL_LOAD_MONITOR_B128 : FLAT_Global_Load_Pseudo <"global_load_monitor_b1
 } // End SubtargetPredicate = isGFX125xOnly
 
 let SubtargetPredicate = isGFX1250Plus, WaveSizePredicate = isWave32 in {
-let Uses = [M0, EXEC] in { // Use M0 for broadcast workgroup mask.
+let Uses = [M0, EXEC_ByHwMode] in { // Use M0 for broadcast workgroup mask.
 defm CLUSTER_LOAD_B32         : FLAT_Global_Load_Pseudo <"cluster_load_b32",  VGPROp_32>;
 defm CLUSTER_LOAD_B64         : FLAT_Global_Load_Pseudo <"cluster_load_b64",  VGPROp_64>;
 defm CLUSTER_LOAD_B128        : FLAT_Global_Load_Pseudo <"cluster_load_b128", VGPROp_128>;
-} // End Uses = [M0, EXEC]
+} // End Uses = [M0, EXEC_ByHwMode]
 } // End SubtargetPredicate = isGFX1250Plus, WaveSizePredicate = isWave32
 
 let SubtargetPredicate = isGFX12Plus in {
-  let Uses = [EXEC, M0] in {
+  let Uses = [EXEC_ByHwMode, M0] in {
     defm GLOBAL_LOAD_BLOCK  : FLAT_Global_Load_Pseudo <"global_load_block", VGPROp_1024>;
     defm GLOBAL_STORE_BLOCK  : FLAT_Global_Store_Pseudo <"global_store_block", VGPROp_1024>;
   }
-  let Uses = [EXEC, FLAT_SCR, M0] in {
+  let Uses = [EXEC_ByHwMode, FLAT_SCR, M0] in {
     defm SCRATCH_LOAD_BLOCK : FLAT_Scratch_Load_Pseudo <"scratch_load_block", VGPROp_1024>;
     defm SCRATCH_STORE_BLOCK : FLAT_Scratch_Store_Pseudo <"scratch_store_block", VGPROp_1024>;
   }

@@ -241,7 +241,7 @@ defm V_MIN_U64 : VOP3Inst <"v_min_u64", VOP_I64_I64_I64_DPP, umin>;
 
 } // End isReMaterializable = 1
 
-let Uses = [MODE, VCC, EXEC] in {
+let Uses = [MODE, VCC_ByHwMode, EXEC_ByHwMode] in {
 // v_div_fmas_f32:
 //   result = src0 * src1 + src2
 //   if (vcc)
@@ -256,7 +256,7 @@ defm V_DIV_FMAS_F32 : VOP3Inst_Pseudo_Wrapper <"v_div_fmas_f32", VOP_F32_F32_F32
 //
 let SchedRW = [WriteDouble], FPDPRounding = 1, IsDPMACCInstruction = 1 in
 defm V_DIV_FMAS_F64 : VOP3Inst <"v_div_fmas_f64", VOP_F64_F64_F64_F64_VCC>;
-} // End Uses = [MODE, VCC, EXEC]
+} // End Uses = [MODE, VCC_ByHwMode, EXEC_ByHwMode]
 
 } // End isCommutable = 1
 
@@ -466,7 +466,7 @@ defm V_MAD_U16 : VOP3Inst <"v_mad_u16", VOP3_Profile<VOP_I16_I16_I16_I16, VOP3_C
 defm V_MAD_I16 : VOP3Inst <"v_mad_i16", VOP3_Profile<VOP_I16_I16_I16_I16, VOP3_CLAMP>>;
 let FPDPRounding = 1 in {
   defm V_MAD_F16 : VOP3Inst <"v_mad_f16", VOP3_Profile<VOP_F16_F16_F16_F16>, any_fmad>;
-  let Uses = [MODE, M0, EXEC] in {
+  let Uses = [MODE, M0, EXEC_ByHwMode] in {
   let OtherPredicates = [isNotGFX90APlus] in
   // For some reason the intrinsic operands are in a different order
   // from the instruction operands.
@@ -478,7 +478,7 @@ let FPDPRounding = 1 in {
                                       (i32 timm:$attr),
                                       (i1 timm:$high),
                                       M0))]>;
-  } // End Uses = [M0, MODE, EXEC]
+  } // End Uses = [M0, MODE, EXEC_ByHwMode]
 } // End FPDPRounding = 1
 
 let SubtargetPredicate = isGFX9Only, FPDPRounding = 1 in {
@@ -495,17 +495,17 @@ def V_INTERP_P2_F16_opsel : VOP3Interp <"v_interp_p2_f16_opsel", VOP3_INTERP16<[
 // This predicate should only apply to the selection pattern. The
 // instruction still exists and should decode on subtargets with
 // other bank counts.
-let OtherPredicates = [isNotGFX90APlus, has32BankLDS], Uses = [MODE, M0, EXEC], FPDPRounding = 1 in {
+let OtherPredicates = [isNotGFX90APlus, has32BankLDS], Uses = [MODE, M0, EXEC_ByHwMode], FPDPRounding = 1 in {
 def V_INTERP_P1LL_F16 : VOP3Interp <"v_interp_p1ll_f16", VOP3_INTERP16<[f32, f32, i32, untyped]>,
        [(set f32:$vdst, (int_amdgcn_interp_p1_f16 (VOP3Mods f32:$src0, i32:$src0_modifiers),
                                                   (i32 timm:$attrchan),
                                                   (i32 timm:$attr),
                                                   (i1 timm:$high), M0))]>;
-} // End OtherPredicates = [isNotGFX90APlus, has32BankLDS], Uses = [MODE, M0, EXEC], FPDPRounding = 1
+} // End OtherPredicates = [isNotGFX90APlus, has32BankLDS], Uses = [MODE, M0, EXEC_ByHwMode], FPDPRounding = 1
 
-let OtherPredicates = [isNotGFX90APlus], Uses = [MODE, M0, EXEC], FPDPRounding = 1 in {
+let OtherPredicates = [isNotGFX90APlus], Uses = [MODE, M0, EXEC_ByHwMode], FPDPRounding = 1 in {
 def V_INTERP_P1LV_F16 : VOP3Interp <"v_interp_p1lv_f16", VOP3_INTERP16<[f32, f32, i32, f16]>>;
-} // End OtherPredicates = [isNotGFX90APlus], Uses = [MODE, M0, EXEC], FPDPRounding = 1
+} // End OtherPredicates = [isNotGFX90APlus], Uses = [MODE, M0, EXEC_ByHwMode], FPDPRounding = 1
 
 } // End SubtargetPredicate = Has16BitInsts, isCommutable = 1
 
@@ -531,11 +531,11 @@ def : GCNPat<
       ), VGPR_32)), sub1)
 >;
 
-let SubtargetPredicate = isGFX8Plus, Uses = [MODE, M0, EXEC], OtherPredicates = [isNotGFX90APlus] in {
+let SubtargetPredicate = isGFX8Plus, Uses = [MODE, M0, EXEC_ByHwMode], OtherPredicates = [isNotGFX90APlus] in {
 def V_INTERP_P1_F32_e64  : VOP3Interp <"v_interp_p1_f32", VOP3_INTERP>;
 def V_INTERP_P2_F32_e64  : VOP3Interp <"v_interp_p2_f32", VOP3_INTERP>;
 def V_INTERP_MOV_F32_e64 : VOP3Interp <"v_interp_mov_f32", VOP3_INTERP_MOV>;
-} // End SubtargetPredicate = isGFX8Plus, Uses = [MODE, M0, EXEC], OtherPredicates = [isNotGFX90APlus]
+} // End SubtargetPredicate = isGFX8Plus, Uses = [MODE, M0, EXEC_ByHwMode], OtherPredicates = [isNotGFX90APlus]
 
 // Note: 16-bit instructions produce a 0 result in the high 16-bits
 // on GFX8 and GFX9 and preserve high 16 bits on GFX10+

@@ -339,7 +339,7 @@ def S_SWAPPC_B64 : SOP1_64 <"s_swappc_b64"
 
 def S_RFE_B64 : SOP1_1  <"s_rfe_b64">;
 
-let hasSideEffects = 1, Uses = [EXEC], Defs = [EXEC, SCC] in {
+let hasSideEffects = 1, Uses = [EXEC_ByHwMode], Defs = [EXEC_ByHwMode, SCC] in {
 
 def S_AND_SAVEEXEC_B64 : SOP1_64 <"s_and_saveexec_b64">;
 def S_OR_SAVEEXEC_B64 : SOP1_64 <"s_or_saveexec_b64">;
@@ -350,7 +350,7 @@ def S_NAND_SAVEEXEC_B64 : SOP1_64 <"s_nand_saveexec_b64">;
 def S_NOR_SAVEEXEC_B64 : SOP1_64 <"s_nor_saveexec_b64">;
 def S_XNOR_SAVEEXEC_B64 : SOP1_64 <"s_xnor_saveexec_b64">;
 
-} // End hasSideEffects = 1, Uses = [EXEC], Defs = [EXEC, SCC]
+} // End hasSideEffects = 1, Uses = [EXEC_ByHwMode], Defs = [EXEC_ByHwMode, SCC]
 
 let Defs = [SCC] in {
 def S_QUADMASK_B32 : SOP1_32 <"s_quadmask_b32",
@@ -384,12 +384,12 @@ def S_SET_GPR_IDX_IDX : SOP1_0_32<"s_set_gpr_idx_idx"> {
 }
 
 let SubtargetPredicate = isGFX9Plus in {
-  let hasSideEffects = 1, Defs = [EXEC, SCC], Uses = [EXEC] in {
+  let hasSideEffects = 1, Defs = [EXEC_ByHwMode, SCC], Uses = [EXEC_ByHwMode] in {
     def S_ANDN1_SAVEEXEC_B64 : SOP1_64<"s_andn1_saveexec_b64">;
     def S_ORN1_SAVEEXEC_B64  : SOP1_64<"s_orn1_saveexec_b64">;
     def S_ANDN1_WREXEC_B64   : SOP1_64<"s_andn1_wrexec_b64">;
     def S_ANDN2_WREXEC_B64   : SOP1_64<"s_andn2_wrexec_b64">;
-  } // End hasSideEffects = 1, Defs = [EXEC, SCC], Uses = [EXEC]
+  } // End hasSideEffects = 1, Defs = [EXEC_ByHwMode, SCC], Uses = [EXEC_ByHwMode]
 
   let isReMaterializable = 1 in
   def S_BITREPLICATE_B64_B32 : SOP1_64_32<"s_bitreplicate_b64_b32",
@@ -397,7 +397,7 @@ let SubtargetPredicate = isGFX9Plus in {
 } // End SubtargetPredicate = isGFX9Plus
 
 let SubtargetPredicate = isGFX10Plus in {
-  let hasSideEffects = 1, Defs = [EXEC, SCC], Uses = [EXEC] in {
+  let hasSideEffects = 1, Defs = [EXEC_ByHwMode, SCC], Uses = [EXEC_ByHwMode] in {
     def S_AND_SAVEEXEC_B32   : SOP1_32<"s_and_saveexec_b32">;
     def S_OR_SAVEEXEC_B32    : SOP1_32<"s_or_saveexec_b32">;
     def S_XOR_SAVEEXEC_B32   : SOP1_32<"s_xor_saveexec_b32">;
@@ -410,7 +410,7 @@ let SubtargetPredicate = isGFX10Plus in {
     def S_ORN1_SAVEEXEC_B32  : SOP1_32<"s_orn1_saveexec_b32">;
     def S_ANDN1_WREXEC_B32   : SOP1_32<"s_andn1_wrexec_b32">;
     def S_ANDN2_WREXEC_B32   : SOP1_32<"s_andn2_wrexec_b32">;
-  } // End hasSideEffects = 1, Defs = [EXEC, SCC], Uses = [EXEC]
+  } // End hasSideEffects = 1, Defs = [EXEC_ByHwMode, SCC], Uses = [EXEC_ByHwMode]
 
   let Uses = [M0] in {
     def S_MOVRELSD_2_B32 : SOP1_32<"s_movrelsd_2_b32">;
@@ -1085,8 +1085,8 @@ class SOPK_32_BR <string opName, list<dag> pattern=[]> : SOPK_Pseudo <
   (ins SOPPBrTarget:$simm16, SReg_32:$sdst),
   "$sdst, $simm16",
   pattern> {
-  let Defs = [EXEC];
-  let Uses = [EXEC];
+  let Defs = [EXEC_ByHwMode];
+  let Uses = [EXEC_ByHwMode];
   let isBranch = 1;
   let isTerminator = 1;
   let SchedRW = [WriteBranch];
@@ -1592,7 +1592,7 @@ defm S_CBRANCH_SCC1 : SOPP_With_Relaxation <
 >;
 } // End Uses = [SCC]
 
-let Uses = [VCC] in {
+let Uses = [VCC_ByHwMode] in {
 defm S_CBRANCH_VCCZ : SOPP_With_Relaxation <
   "s_cbranch_vccz" , (ins SOPPBrTarget:$simm16),
   "$simm16"
@@ -1601,9 +1601,9 @@ defm S_CBRANCH_VCCNZ : SOPP_With_Relaxation <
   "s_cbranch_vccnz" , (ins SOPPBrTarget:$simm16),
   "$simm16"
 >;
-} // End Uses = [VCC]
+} // End Uses = [VCC_ByHwMode]
 
-let Uses = [EXEC] in {
+let Uses = [EXEC_ByHwMode] in {
 defm S_CBRANCH_EXECZ : SOPP_With_Relaxation <
   "s_cbranch_execz" , (ins SOPPBrTarget:$simm16),
   "$simm16"
@@ -1612,7 +1612,7 @@ defm S_CBRANCH_EXECNZ : SOPP_With_Relaxation <
   "s_cbranch_execnz" , (ins SOPPBrTarget:$simm16),
   "$simm16"
 >;
-} // End Uses = [EXEC]
+} // End Uses = [EXEC_ByHwMode]
 
 defm S_CBRANCH_CDBGSYS : SOPP_With_Relaxation <
   "s_cbranch_cdbgsys" , (ins SOPPBrTarget:$simm16),
@@ -1760,7 +1760,7 @@ def S_GET_SHADER_CYCLES_U64 : SOP1_64_0 <"s_get_shader_cycles_u64",
   let hasSideEffects = 1;
 }
 
-let Uses = [EXEC, M0] in {
+let Uses = [EXEC_ByHwMode, M0] in {
 def S_SENDMSG : SOPP_Pseudo <"s_sendmsg" , (ins SendMsg:$simm16), "$simm16",
   [(int_amdgcn_s_sendmsg (i32 timm:$simm16), M0)]> {
 }
@@ -1769,7 +1769,7 @@ def S_SENDMSGHALT : SOPP_Pseudo <"s_sendmsghalt" , (ins SendMsg:$simm16), "$simm
   [(int_amdgcn_s_sendmsghalt (i32 timm:$simm16), M0)]> {
 }
 
-} // End Uses = [EXEC, M0]
+} // End Uses = [EXEC_ByHwMode, M0]
 
 def S_TRAP : SOPP_Pseudo <"s_trap" , (ins i16imm:$simm16), "$simm16"> {
   let isTrap = 1;

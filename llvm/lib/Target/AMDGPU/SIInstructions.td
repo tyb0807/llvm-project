@@ -38,7 +38,7 @@ include "VINTERPInstructions.td"
 // Used to inject printing of "_e32" suffix for VI (there are "_e64" variants for VI)
 def VINTRPDst : VINTRPDstOperand <VGPR_32>;
 
-let Uses = [MODE, M0, EXEC] in {
+let Uses = [MODE, M0, EXEC_ByHwMode] in {
 
 // FIXME: Specify SchedRW for VINTRP instructions.
 
@@ -89,7 +89,7 @@ defm V_INTERP_MOV_F32 : VINTRP_m <
 
 } // End OtherPredicates = [isNotGFX90APlus]
 
-} // End Uses = [MODE, M0, EXEC]
+} // End Uses = [MODE, M0, EXEC_ByHwMode]
 
 //===----------------------------------------------------------------------===//
 // Pseudo Instructions
@@ -117,7 +117,7 @@ def ATOMIC_FENCE : SPseudoInstSI<
   let hasSideEffects = 1;
 }
 
-let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Uses = [EXEC] in {
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Uses = [EXEC_ByHwMode] in {
 
 // For use in patterns
 // No align needed as it will be decomposed anyway
@@ -215,7 +215,7 @@ def STRICT_WWM : PseudoInstSI <(outs unknown:$vdst), (ins unknown:$src0)>;
 def STRICT_WQM : PseudoInstSI <(outs unknown:$vdst), (ins unknown:$src0)>;
 }
 
-} // End let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Uses = [EXEC]
+} // End let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Uses = [EXEC_ByHwMode]
 
 def WWM_COPY : SPseudoInstSI <
   (outs unknown:$dst), (ins unknown:$src)> {
@@ -225,8 +225,8 @@ def WWM_COPY : SPseudoInstSI <
 }
 
 def ENTER_STRICT_WWM : SPseudoInstSI <(outs SReg_1:$sdst), (ins i64imm:$src0)> {
-  let Uses = [EXEC];
-  let Defs = [EXEC, SCC];
+  let Uses = [EXEC_ByHwMode];
+  let Defs = [EXEC_ByHwMode, SCC];
   let hasSideEffects = 0;
   let mayLoad = 0;
   let mayStore = 0;
@@ -239,8 +239,8 @@ def EXIT_STRICT_WWM : SPseudoInstSI <(outs SReg_1:$sdst), (ins SReg_1:$src0)> {
 }
 
 def ENTER_STRICT_WQM : SPseudoInstSI <(outs SReg_1:$sdst), (ins i64imm:$src0)> {
-  let Uses = [EXEC];
-  let Defs = [EXEC, SCC];
+  let Uses = [EXEC_ByHwMode];
+  let Defs = [EXEC_ByHwMode, SCC];
   let hasSideEffects = 0;
   let mayLoad = 0;
   let mayStore = 0;
@@ -274,7 +274,7 @@ let WaveSizePredicate = isWave32 in
 
 // Pseudo instructions used for @llvm.fptrunc.round. The final codegen is done
 // in the ModeRegister pass.
-let Uses = [MODE, EXEC] in {
+let Uses = [MODE, EXEC_ByHwMode] in {
 let True16Predicate = NotHasTrue16BitInsts in
 def FPTRUNC_ROUND_F16_F32_PSEUDO : VPseudoInstSI <(outs VGPR_32:$vdst),
   (ins VGPR_32:$src0, i32imm:$round)>;
@@ -294,7 +294,7 @@ def FPTRUNC_ROUND_F16_F32_PSEUDO_t16_e64 : VPseudoInstSI <(outs VOPDstOperand_t1
 
 def FPTRUNC_ROUND_F32_F64_PSEUDO : VPseudoInstSI <(outs VGPR_32:$vdst),
   (ins VReg_64:$src0, i32imm:$round)>;
-} // End Uses = [MODE, EXEC]
+} // End Uses = [MODE, EXEC_ByHwMode]
 
 let True16Predicate = NotHasTrue16BitInsts in
 def : GCNPat <(f16 (fptrunc_round f32:$src0, (i32 SupportedRoundMode:$round))),
@@ -328,7 +328,7 @@ def : GCNPat<(i32 (int_amdgcn_set_inactive_chain_arg i32:$src, i32:$inactive)),
 
 multiclass
     AMDGPUWaveReducePseudoGenerator<string Op, string DataType, ValueType ty, RegisterClass RetReg, SrcRegOrImm9 Reg> {
-  let usesCustomInserter = 1, hasSideEffects = 0, mayLoad = 0, mayStore = 0, UseNamedOperandTable = 1, Uses = [EXEC] in {
+  let usesCustomInserter = 1, hasSideEffects = 0, mayLoad = 0, mayStore = 0, UseNamedOperandTable = 1, Uses = [EXEC_ByHwMode] in {
     def !toupper(Op) #"_PSEUDO_" #DataType
         : VPseudoInstSI<(outs RetReg : $sdst),
                         (ins Reg : $src, VSrc_b32 : $strategy),
@@ -387,7 +387,7 @@ foreach Op = Operations in {
                                                       Op.VT, Op.RetReg, Op.Reg>;
 }
 
-let usesCustomInserter = 1, Defs = [VCC] in {
+let usesCustomInserter = 1, Defs = [VCC_ByHwMode] in {
 def V_ADD_U64_PSEUDO : VPseudoInstSI <
   (outs VReg_64_AlignTarget:$vdst), (ins VSrc_b64:$src0, VSrc_b64:$src1),
   [(set VReg_64_AlignTarget:$vdst, (DivergentBinFrag<add> i64:$src0, i64:$src1))]
@@ -397,7 +397,7 @@ def V_SUB_U64_PSEUDO : VPseudoInstSI <
   (outs VReg_64_AlignTarget:$vdst), (ins VSrc_b64:$src0, VSrc_b64:$src1),
   [(set VReg_64_AlignTarget:$vdst, (DivergentBinFrag<sub> i64:$src0, i64:$src1))]
 >;
-} // End usesCustomInserter = 1, Defs = [VCC]
+} // End usesCustomInserter = 1, Defs = [VCC_ByHwMode]
 
 let usesCustomInserter = 1, Defs = [SCC] in {
 def S_ADD_U64_PSEUDO : SPseudoInstSI <
@@ -599,10 +599,10 @@ def SI_IF_BREAK : CFPseudoInstSI <
 // a mask of live lanes after a kill/demote operation.
 // Only valid in pixel shaders.
 def SI_EARLY_TERMINATE_SCC0 : SPseudoInstSI <(outs), (ins)> {
-  let Uses = [EXEC,SCC];
+  let Uses = [EXEC_ByHwMode,SCC];
 }
 
-let Uses = [EXEC] in {
+let Uses = [EXEC_ByHwMode] in {
 
 multiclass PseudoInstKill <dag ins> {
   // Even though this pseudo can usually be expanded without an SCC def, we
@@ -610,28 +610,28 @@ multiclass PseudoInstKill <dag ins> {
   // required in degenerate cases (when V_CMPX cannot be used due to constant
   // bus limitations) and because it allows us to avoid having to track SCC
   // liveness across basic blocks.
-  let Defs = [EXEC,SCC] in
+  let Defs = [EXEC_ByHwMode,SCC] in
   def _PSEUDO : PseudoInstSI <(outs), ins> {
     let isConvergent = 1;
     let usesCustomInserter = 1;
   }
 
-  let Defs = [EXEC,SCC] in
+  let Defs = [EXEC_ByHwMode,SCC] in
   def _TERMINATOR : SPseudoInstSI <(outs), ins> {
     let isTerminator = 1;
   }
 }
 
 defm SI_KILL_I1 : PseudoInstKill <(ins SCSrc_i1:$src, i1imm:$killvalue)>;
-let Defs = [VCC] in
+let Defs = [VCC_ByHwMode] in
 defm SI_KILL_F32_COND_IMM : PseudoInstKill <(ins VSrc_b32:$src0, i32imm:$src1, i32imm:$cond)>;
 
-let Defs = [EXEC,VCC] in
+let Defs = [EXEC_ByHwMode,VCC_ByHwMode] in
 def SI_ILLEGAL_COPY : SPseudoInstSI <
   (outs unknown:$dst), (ins unknown:$src),
   [], " ; illegal copy $src to $dst">;
 
-} // End Uses = [EXEC], Defs = [EXEC,VCC]
+} // End Uses = [EXEC_ByHwMode], Defs = [EXEC_ByHwMode,VCC_ByHwMode]
 
 // Branch on undef scc. Used to avoid intermediate copy from
 // IMPLICIT_DEF to SCC.
@@ -647,17 +647,17 @@ def SI_PS_LIVE : PseudoInstSI <
   let SALU = 1;
 }
 
-let Uses = [EXEC] in {
+let Uses = [EXEC_ByHwMode] in {
 def SI_LIVE_MASK : PseudoInstSI <
   (outs SReg_1:$dst), (ins),
   [(set i1:$dst, (int_amdgcn_live_mask))]> {
   let SALU = 1;
 }
-let Defs = [EXEC,SCC] in {
+let Defs = [EXEC_ByHwMode,SCC] in {
 // Demote: Turn a pixel shader thread into a helper lane.
 def SI_DEMOTE_I1 : SPseudoInstSI <(outs), (ins SCSrc_i1:$src, i1imm:$killvalue)>;
-} // End Defs = [EXEC,SCC]
-} // End Uses = [EXEC]
+} // End Defs = [EXEC_ByHwMode,SCC]
+} // End Uses = [EXEC_ByHwMode]
 
 def SI_MASKED_UNREACHABLE : SPseudoInstSI <(outs), (ins),
   [(int_amdgcn_unreachable)],
@@ -683,22 +683,22 @@ def SI_INIT_M0 : SPseudoInstSI <(outs), (ins SSrc_b32:$src)> {
 def SI_INIT_EXEC : SPseudoInstSI <
   (outs), (ins i64imm:$src),
   [(int_amdgcn_init_exec (i64 timm:$src))]> {
-  let Defs = [EXEC];
+  let Defs = [EXEC_ByHwMode];
   let isAsCheapAsAMove = 1;
 }
 
 def SI_INIT_EXEC_FROM_INPUT : SPseudoInstSI <
   (outs), (ins SSrc_b32:$input, i32imm:$shift),
   [(int_amdgcn_init_exec_from_input i32:$input, (i32 timm:$shift))]> {
-  let Defs = [EXEC];
+  let Defs = [EXEC_ByHwMode];
 }
 
 // Sets EXEC to all lanes and returns the previous EXEC.
 def SI_INIT_WHOLE_WAVE : SPseudoInstSI <
   (outs SReg_1:$dst), (ins),
   [(set i1:$dst, (int_amdgcn_init_whole_wave))]> {
-  let Defs = [EXEC];
-  let Uses = [EXEC];
+  let Defs = [EXEC_ByHwMode];
+  let Uses = [EXEC_ByHwMode];
 
   let isConvergent = 1;
 }
@@ -706,8 +706,8 @@ def SI_INIT_WHOLE_WAVE : SPseudoInstSI <
 // Sets EXEC to all lanes and returns the previous EXEC.
 def SI_WHOLE_WAVE_FUNC_SETUP : SPseudoInstSI <
   (outs SReg_1:$dst), (ins), [(set i1:$dst, (AMDGPUwhole_wave_setup))]> {
-  let Defs = [EXEC];
-  let Uses = [EXEC];
+  let Defs = [EXEC_ByHwMode];
+  let Uses = [EXEC_ByHwMode];
 
   let isConvergent = 1;
 }
@@ -960,7 +960,7 @@ def GET_STACK_BASE : SPseudoInstSI<(outs SGPR_32:$dst), (ins),
 }
 } // End Defs = [SCC]
 
-let Defs = [M0, EXEC, SCC],
+let Defs = [M0, EXEC_ByHwMode, SCC],
   UseNamedOperandTable = 1 in {
 
 // SI_INDIRECT_SRC/DST are only used by legacy SelectionDAG indirect
@@ -1008,7 +1008,7 @@ def SI_INDIRECT_DST_V12 : SI_INDIRECT_DST<VReg_384>;
 def SI_INDIRECT_DST_V16 : SI_INDIRECT_DST<VReg_512>;
 def SI_INDIRECT_DST_V32 : SI_INDIRECT_DST<VReg_1024>;
 
-} // End Uses = [EXEC], Defs = [M0, EXEC]
+} // End Uses = [EXEC_ByHwMode], Defs = [M0, EXEC_ByHwMode]
 
 // This is a pseudo variant of the v_movreld_b32 instruction in which the
 // vector operand appears only twice, once as def and once as use. Using this
@@ -1024,7 +1024,7 @@ class V_INDIRECT_REG_WRITE_MOVREL_B32_pseudo<RegisterClass rc> :
   INDIRECT_REG_WRITE_MOVREL_pseudo<rc, VSrc_b32> {
   let VALU = 1;
   let VOP1 = 1;
-  let Uses = [M0, EXEC];
+  let Uses = [M0, EXEC_ByHwMode];
 }
 
 class S_INDIRECT_REG_WRITE_MOVREL_pseudo<RegisterClass rc,
@@ -1085,7 +1085,7 @@ class V_INDIRECT_REG_WRITE_GPR_IDX_pseudo<RegisterClass rc> : PseudoInstSI <
   (outs rc:$vdst), (ins rc:$vsrc, VSrc_b32:$val, SSrc_b32:$idx, i32imm:$subreg)> {
   let Constraints = "$vsrc = $vdst";
   let VALU = 1;
-  let Uses = [M0, EXEC];
+  let Uses = [M0, EXEC_ByHwMode];
   let Defs = [M0];
 }
 
@@ -1107,7 +1107,7 @@ def V_INDIRECT_REG_WRITE_GPR_IDX_B32_V32 : V_INDIRECT_REG_WRITE_GPR_IDX_pseudo<V
 class V_INDIRECT_REG_READ_GPR_IDX_pseudo<RegisterClass rc> : PseudoInstSI <
   (outs VGPR_32:$vdst), (ins rc:$vsrc, SSrc_b32:$idx, i32imm:$subreg)> {
   let VALU = 1;
-  let Uses = [M0, EXEC];
+  let Uses = [M0, EXEC_ByHwMode];
   let Defs = [M0];
 }
 
@@ -1127,7 +1127,7 @@ def V_INDIRECT_REG_READ_GPR_IDX_B32_V16 : V_INDIRECT_REG_READ_GPR_IDX_pseudo<VRe
 def V_INDIRECT_REG_READ_GPR_IDX_B32_V32 : V_INDIRECT_REG_READ_GPR_IDX_pseudo<VReg_1024>;
 
 multiclass SI_SPILL_SGPR <RegisterClass sgpr_class> {
-  let UseNamedOperandTable = 1, Spill = 1, SALU = 1, Uses = [EXEC] in {
+  let UseNamedOperandTable = 1, Spill = 1, SALU = 1, Uses = [EXEC_ByHwMode] in {
     def _SAVE : PseudoInstSI <
       (outs),
       (ins sgpr_class:$data, i32imm:$addr)> {
@@ -4859,7 +4859,7 @@ def V_ILLEGAL : Enc32, InstSI<(outs), (ins), "v_illegal"> {
   let Inst{31-0} = 0x00000000;
   let FixedSize = 1;
   let Size = 4;
-  let Uses = [EXEC];
+  let Uses = [EXEC_ByHwMode];
   let hasSideEffects = 1;
   let SubtargetPredicate = isGFX10Plus;
 }

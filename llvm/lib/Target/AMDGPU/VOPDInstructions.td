@@ -171,8 +171,8 @@ class VOPD3<dag outs, dag ins, string asm, VOP_Pseudo VDX, VOP_Pseudo VDY,
   // VOPD3 uses promoted form of VOP2 instructions, so V_CNDMASK_B32 is not
   // limited to VCC src2 only, and a real SGPR will be used as an operand
   // instead.
-  defvar UsesX = !if(!eq(VDX, V_CNDMASK_B32_e32), !filter(x, VDX.Uses, !ne(x, VCC)), VDX.Uses);
-  defvar UsesY = !if(!eq(VDY, V_CNDMASK_B32_e32), !filter(x, VDY.Uses, !ne(x, VCC)), VDY.Uses);
+  defvar UsesX = !if(!eq(VDX, V_CNDMASK_B32_e32), !filter(x, VDX.Uses, !ne(x, VCC_ByHwMode)), VDX.Uses);
+  defvar UsesY = !if(!eq(VDY, V_CNDMASK_B32_e32), !filter(x, VDY.Uses, !ne(x, VCC_ByHwMode)), VDY.Uses);
   let Uses = RegListUnion<UsesX, UsesY>.ret;
 }
 

@@ -970,17 +970,20 @@ void InstrInfoEmitter::run(raw_ostream &OS) {
     HasUseNamedOperandTable |=
         Inst->TheDef->getValueAsBit("UseNamedOperandTable");
 
-    // Resolve ImplicitRegByHwMode records to their default-mode Register
-    // for the ImplicitOps array.  Collect the originals for table generation.
+    // Collect ImplicitRegByHwMode records from the raw record (before
+    // CodeGenInstruction resolves them to default-mode registers).
+    // The resolved registers are used for the ImplicitOps array.
     std::vector<const Record *> ImplicitOps;
-    for (const Record *R : Inst->ImplicitUses) {
+    for (const Record *R : Inst->TheDef->getValueAsListOfDefs("Uses")) {
       addImplicitRegByHwMode(R);
-      ImplicitOps.push_back(resolveImplicitRegByHwMode(R, CGH));
     }
-    for (const Record *R : Inst->ImplicitDefs) {
+    for (const Record *R : Inst->TheDef->getValueAsListOfDefs("Defs")) {
       addImplicitRegByHwMode(R);
-      ImplicitOps.push_back(resolveImplicitRegByHwMode(R, CGH));
     }
+    for (const Record *R : Inst->ImplicitUses)
+      ImplicitOps.push_back(R);
+    for (const Record *R : Inst->ImplicitDefs)
+      ImplicitOps.push_back(R);
     if (EmittedLists.try_emplace(ImplicitOps, ImplicitListSize).second) {
       ImplicitLists.push_back(ImplicitOps);
       ImplicitListSize += ImplicitOps.size();
@@ -1402,15 +1405,14 @@ void InstrInfoEmitter::emitRecord(
   const CodeGenTarget &Target = CDP.getTargetInfo();
 
   // Emit the implicit use/def list...
-  // Resolve ImplicitRegByHwMode to default-mode registers so the lookup
-  // into EmittedLists matches the resolved keys used during collection.
-  const CodeGenHwModes &CGH = Target.getHwModes();
+  // ImplicitUses/ImplicitDefs are already resolved to default-mode registers
+  // by CodeGenInstruction.
   OS << Inst.ImplicitUses.size() << ",\t" << Inst.ImplicitDefs.size() << ",\t";
   std::vector<const Record *> ImplicitOps;
   for (const Record *R : Inst.ImplicitUses)
-    ImplicitOps.push_back(resolveImplicitRegByHwMode(R, CGH));
+    ImplicitOps.push_back(R);
   for (const Record *R : Inst.ImplicitDefs)
-    ImplicitOps.push_back(resolveImplicitRegByHwMode(R, CGH));
+    ImplicitOps.push_back(R);
 
   // Emit the operand info offset.
   OperandInfoTy OperandInfo = GetOperandInfo(Inst);

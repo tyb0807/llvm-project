@@ -55,7 +55,7 @@ class VOP1_Pseudo <string opName, VOPProfile P, list<dag> pattern=[], bit VOP1On
 
   let VOP1 = 1;
   let VALU = 1;
-  let Uses = !if(ReadsModeReg, [MODE, EXEC], [EXEC]);
+  let Uses = !if(ReadsModeReg, [MODE, EXEC_ByHwMode], [EXEC_ByHwMode]);
 
   let AsmVariantName = AMDGPUAsmVariants.Default;
 }
@@ -480,7 +480,7 @@ class VOP_MOVREL<RegisterOperand Src1RC> : VOPProfile<[untyped, i32, untyped, un
 def VOP_MOVRELD : VOP_MOVREL<VSrc_b32>;
 def VOP_MOVRELSD : VOP_MOVREL<VRegSrc_32>;
 
-let SubtargetPredicate = HasMovrel, Uses = [M0, EXEC] in {
+let SubtargetPredicate = HasMovrel, Uses = [M0, EXEC_ByHwMode] in {
  // v_movreld_b32 is a special case because the destination output
  // register is really a source. It isn't actually read (but may be
  // written), and is only to provide the base register to start
@@ -490,7 +490,7 @@ let SubtargetPredicate = HasMovrel, Uses = [M0, EXEC] in {
 defm V_MOVRELD_B32 : VOP1Inst <"v_movreld_b32", VOP_MOVRELD>;
 defm V_MOVRELS_B32 : VOP1Inst <"v_movrels_b32", VOP_MOVRELS>;
 defm V_MOVRELSD_B32 : VOP1Inst <"v_movrelsd_b32", VOP_MOVRELSD>;
-} // End Uses = [M0, EXEC]
+} // End Uses = [M0, EXEC_ByHwMode]
 
 let isReMaterializable = 1 in {
 let SubtargetPredicate = isGFX6GFX7 in {
@@ -1631,7 +1631,7 @@ defm V_CVT_NORM_U16_F16  : VOP1_Real_vi<0x4e>;
 
 defm V_ACCVGPR_MOV_B32   : VOP1Only_Real_vi<0x52>;
 
-let VOP1 = 1, SubtargetPredicate = isGFX8GFX9, Uses = [EXEC, M0], Size = V_MOV_B32_e32.Size in {
+let VOP1 = 1, SubtargetPredicate = isGFX8GFX9, Uses = [EXEC_ByHwMode, M0], Size = V_MOV_B32_e32.Size in {
 
 // Copy of v_mov_b32 with $vdst as a use operand for use with VGPR
 // indexing mode. vdst can't be treated as a def for codegen purposes,

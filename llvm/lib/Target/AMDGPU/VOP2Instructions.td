@@ -89,7 +89,7 @@ class VOP2_Pseudo <string opName, VOPProfile P, list<dag> pattern=[], string suf
 
   let VOP2 = 1;
   let VALU = 1;
-  let Uses = !if(ReadsModeReg, [MODE, EXEC], [EXEC]);
+  let Uses = !if(ReadsModeReg, [MODE, EXEC_ByHwMode], [EXEC_ByHwMode]);
 
   let AsmVariantName = AMDGPUAsmVariants.Default;
 }
@@ -269,7 +269,7 @@ multiclass VOP2bInst <string opName,
                       string revOp = opName,
                       bit useSGPRInput = !eq(P.NumSrcArgs, 3)> {
     let SchedRW = [Write32Bit, WriteSALU] in {
-      let Uses = !if(useSGPRInput, [VCC, EXEC], [EXEC]), Defs = [VCC] in {
+      let Uses = !if(useSGPRInput, [VCC_ByHwMode, EXEC_ByHwMode], [EXEC_ByHwMode]), Defs = [VCC_ByHwMode] in {
         def _e32 : VOP2_Pseudo <opName, P, VOPPatOrNull<node,P>.ret>,
                    Commutable_REV<revOp#"_e32", !eq(revOp, opName)> {
           let usesCustomInserter = true;
@@ -282,7 +282,7 @@ multiclass VOP2bInst <string opName,
           }
         if P.HasExtDPP then
           def _dpp  : VOP2_DPP_Pseudo <opName, P>;
-      } // End Uses = !if(useSGPRInput, [VCC, EXEC], [EXEC]), Defs = [VCC]
+      } // End Uses = !if(useSGPRInput, [VCC_ByHwMode, EXEC_ByHwMode], [EXEC_ByHwMode]), Defs = [VCC_ByHwMode]
 
       def _e64 : VOP3InstBase <opName, P, node, 1>,
                  Commutable_REV<revOp#"_e64", !eq(revOp, opName)>;
@@ -321,7 +321,7 @@ multiclass
                    SDPatternOperator node, string revOp, bit useSGPRInput> {
 
   let SchedRW = [Write32Bit] in {
-    let Uses = !if(useSGPRInput, [VCC, EXEC], [EXEC]) in {
+    let Uses = !if(useSGPRInput, [VCC_ByHwMode, EXEC_ByHwMode], [EXEC_ByHwMode]) in {
       if !empty(VOPDName) then
         def _e32 : VOP2_Pseudo <opName, P>,
                    Commutable_REV<revOp#"_e32", !eq(revOp, opName)>;

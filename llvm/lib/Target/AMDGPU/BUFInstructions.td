@@ -68,7 +68,7 @@ class BUF_Pseudo <string opName, dag outs, dag ins,
   let VM_CNT = 1;
   let EXP_CNT = 1;
 
-  let Uses = [EXEC];
+  let Uses = [EXEC_ByHwMode];
   let hasSideEffects = 0;
   let SchedRW = [WriteVMEM];
 
@@ -516,7 +516,7 @@ class MUBUF_Load_Pseudo <string opName,
   let has_vdata = !not(!or(isLds, isLdsOpc));
   let mayLoad = 1;
   let mayStore = isLds;
-  let Uses = !if(!or(isLds, isLdsOpc) , [EXEC, M0], [EXEC]);
+  let Uses = !if(!or(isLds, isLdsOpc) , [EXEC_ByHwMode, M0], [EXEC_ByHwMode]);
   let tfe = isTFE;
   let lds = isLds;
   let elements = getMUBUFElements<vdata_vt>.ret;
@@ -763,7 +763,7 @@ class MUBUF_Pseudo_Store_Lds<string opName>
   let lds = 1;
   let VALU = 1;
 
-  let Uses = [EXEC, M0];
+  let Uses = [EXEC_ByHwMode, M0];
   let AsmMatchConverter = "cvtMubuf";
 }
 

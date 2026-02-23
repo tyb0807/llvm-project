@@ -48,7 +48,7 @@ class DS_Pseudo <string opName, dag outs, dag ins, string asmOps, list<dag> patt
 
   bits<1> has_m0_read = 1;
 
-  let Uses = !if(has_m0_read, [M0, EXEC], [EXEC]);
+  let Uses = !if(has_m0_read, [M0, EXEC_ByHwMode], [EXEC_ByHwMode]);
 }
 
 class DS_Real <DS_Pseudo ps, string opName = ps.Mnemonic> :
@@ -758,7 +758,7 @@ def DS_WRITE_SRC2_B32 : DS_1A<"ds_write_src2_b32">;
 def DS_WRITE_SRC2_B64 : DS_1A<"ds_write_src2_b64">;
 } // End SubtargetPredicate = HasDsSrc2Insts
 
-let Uses = [EXEC], mayLoad = 0, mayStore = 0, isConvergent = 1 in {
+let Uses = [EXEC_ByHwMode], mayLoad = 0, mayStore = 0, isConvergent = 1 in {
 def DS_SWIZZLE_B32 : DS_1A_RET <"ds_swizzle_b32", AVLdSt_32, 0, Swizzle>;
 }
 
@@ -833,7 +833,7 @@ def DS_NOP : DS_VOID<"ds_nop">;
 
 let SubtargetPredicate = isGFX8Plus in {
 
-let Uses = [EXEC] in {
+let Uses = [EXEC_ByHwMode] in {
 defm DS_PERMUTE_B32  : DS_1A1D_PERMUTE_mc<"ds_permute_b32",
                                          int_amdgcn_ds_permute>;
 defm DS_BPERMUTE_B32 : DS_1A1D_PERMUTE_mc<"ds_bpermute_b32",
@@ -900,7 +900,7 @@ defm DS_LOAD_TR16_B128 : DS_1A_RET_NoM0<"ds_load_tr16_b128", VGPROp_128>;
 } // End WaveSizePredicate = isWave32, mayStore = 0
 
 let OtherPredicates = [HasLdsBarrierArriveAtomic] in {
-let ASYNC_CNT = 1, LGKM_CNT = 0, Uses = [EXEC, ASYNCcnt], Defs = [ASYNCcnt] in {
+let ASYNC_CNT = 1, LGKM_CNT = 0, Uses = [EXEC_ByHwMode, ASYNCcnt], Defs = [ASYNCcnt] in {
 def DS_ATOMIC_ASYNC_BARRIER_ARRIVE_B64 : DS_1A_Off16_NORET<"ds_atomic_async_barrier_arrive_b64">;
 }
 

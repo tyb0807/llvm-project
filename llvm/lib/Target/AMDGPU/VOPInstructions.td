@@ -23,8 +23,8 @@ class LetDummies {
   string Constraints;
   string DisableEncoding;
   list<SchedReadWrite> SchedRW;
-  list<Register> Uses;
-  list<Register> Defs;
+  list<RegisterLike> Uses;
+  list<RegisterLike> Defs;
   list<Predicate> OtherPredicates;
   Predicate AssemblerPredicate;
   string DecoderNamespace;
@@ -57,7 +57,7 @@ class VOPAnyCommon <dag outs, dag ins, string asm, list<dag> pattern> :
   let hasSideEffects = 0;
   let UseNamedOperandTable = 1;
   let VALU = 1;
-  let Uses = !if(ReadsModeReg, [MODE, EXEC], [EXEC]);
+  let Uses = !if(ReadsModeReg, [MODE, EXEC_ByHwMode], [EXEC_ByHwMode]);
 }
 
 class VOP_Pseudo <string opName, string suffix, VOPProfile P, dag outs, dag ins,
@@ -148,7 +148,7 @@ class VOP3_Pseudo <string opName, VOPProfile P, list<dag> pattern = [],
   let ReadsModeReg = !or(P.DstVT.isFP, P.Src0VT.isFP);
 
   let mayRaiseFPException = ReadsModeReg;
-  let Uses = !if(ReadsModeReg, [MODE, EXEC], [EXEC]);
+  let Uses = !if(ReadsModeReg, [MODE, EXEC_ByHwMode], [EXEC_ByHwMode]);
 
   let AsmVariantName = AMDGPUAsmVariants.VOP3;
   let AsmMatchConverter =
@@ -786,7 +786,7 @@ class VOP_SDWA_Pseudo <string opName, VOPProfile P, list<dag> pattern=[]> :
   let ReadsModeReg = !or(P.DstVT.isFP, P.Src0VT.isFP);
 
   let mayRaiseFPException = ReadsModeReg;
-  let Uses = !if(ReadsModeReg, [MODE, EXEC], [EXEC]);
+  let Uses = !if(ReadsModeReg, [MODE, EXEC_ByHwMode], [EXEC_ByHwMode]);
 
   let SubtargetPredicate = HasSDWA;
   let AsmVariantName = !if(P.HasExtSDWA, AMDGPUAsmVariants.SDWA,
@@ -1024,7 +1024,7 @@ class VOP_DPP_Pseudo <string OpName, VOPProfile P, list<dag> pattern=[],
   let ReadsModeReg = !or(P.DstVT.isFP, P.Src0VT.isFP);
 
   let mayRaiseFPException = ReadsModeReg;
-  let Uses = !if(ReadsModeReg, [MODE, EXEC], [EXEC]);
+  let Uses = !if(ReadsModeReg, [MODE, EXEC_ByHwMode], [EXEC_ByHwMode]);
   let isConvergent = 1;
 
   string AsmOperands = asmOps;

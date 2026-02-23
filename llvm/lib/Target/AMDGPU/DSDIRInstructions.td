@@ -78,7 +78,7 @@ class DSDIR_Common<string opName, string asm = "", dag ins, bit direct> :
   string Mnemonic = opName;
   let UseNamedOperandTable = 1;
 
-  let Uses = [M0, EXEC];
+  let Uses = [M0, EXEC_ByHwMode];
   let DisableWQM = 0;
   let SchedRW = [WriteLDS];
 

@@ -1220,6 +1220,37 @@ def SReg_1 : SIRegisterClassLike<0, false, false, true>,
 >;
 
 //===----------------------------------------------------------------------===//
+//  ImplicitRegByHwMode definitions for implicit operands that differ
+//  between wave64 (VCC/EXEC) and wave32 (VCC_LO/EXEC_LO).
+//===----------------------------------------------------------------------===//
+
+def VCC_ByHwMode : ImplicitRegByHwMode<
+    [DefaultMode_Wave64,
+     AlignedVGPRNoAGPRMode_Wave64,
+     AVAlign2LoadStoreMode,
+     DefaultMode_Wave32,
+     AlignedVGPRNoAGPRMode_Wave32],
+    [VCC,
+     VCC,
+     VCC,
+     VCC_LO,
+     VCC_LO]
+>;
+
+def EXEC_ByHwMode : ImplicitRegByHwMode<
+    [DefaultMode_Wave64,
+     AlignedVGPRNoAGPRMode_Wave64,
+     AVAlign2LoadStoreMode,
+     DefaultMode_Wave32,
+     AlignedVGPRNoAGPRMode_Wave32],
+    [EXEC,
+     EXEC,
+     EXEC,
+     EXEC_LO,
+     EXEC_LO]
+>;
+
+//===----------------------------------------------------------------------===//
 //
 //  AlignTarget classes. Artifical classes to swap between
 //  even-aligned and any-aligned classes depending on subtarget.

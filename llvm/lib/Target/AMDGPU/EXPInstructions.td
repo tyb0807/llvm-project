@@ -22,7 +22,7 @@ class EXPCommon<bit _row, bit _done, string asm = ""> : InstSI<
   let mayStore = 1;
   let maybeAtomic = 0;
   let UseNamedOperandTable = 1;
-  let Uses = !if(_row, [EXEC, M0], [EXEC]);
+  let Uses = !if(_row, [EXEC_ByHwMode, M0], [EXEC_ByHwMode]);
   let SchedRW = [WriteExport];
   let DisableWQM = 1;
 

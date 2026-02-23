@@ -471,8 +471,34 @@ CodeGenInstruction::CodeGenInstruction(const Record *R)
   isCodeGenOnly = R->getValueAsBit("isCodeGenOnly");
   isPseudo = R->getValueAsBit("isPseudo");
   isMeta = R->getValueAsBit("isMeta");
-  ImplicitDefs = R->getValueAsListOfDefs("Defs");
-  ImplicitUses = R->getValueAsListOfDefs("Uses");
+  // Resolve ImplicitRegByHwMode records to their default-mode Register so
+  // that all backends (GlobalISel, DAGISel, etc.) see plain Register records.
+  // The InstrInfoEmitter reads the raw Defs/Uses from the Record directly to
+  // generate the RegisterByHwMode side tables.
+  auto resolveImplicitRegs = [](std::vector<const Record *> Regs) {
+    for (const Record *&R : Regs) {
+      if (R->isSubClassOf("ImplicitRegByHwMode")) {
+        // Find the default-mode register by matching DefaultMode in the Modes
+        // list.
+        auto Modes = R->getValueAsListOfDefs("Modes");
+        auto Objects = R->getValueAsListOfDefs("Objects");
+        const Record *DefaultReg = nullptr;
+        for (auto [Mode, Obj] : zip_equal(Modes, Objects)) {
+          if (Mode->getName() == "DefaultMode") {
+            DefaultReg = Obj;
+            break;
+          }
+        }
+        if (!DefaultReg)
+          PrintFatalError(R->getLoc(),
+                          "ImplicitRegByHwMode has no DefaultMode entry");
+        R = DefaultReg;
+      }
+    }
+    return Regs;
+  };
+  ImplicitDefs = resolveImplicitRegs(R->getValueAsListOfDefs("Defs"));
+  ImplicitUses = resolveImplicitRegs(R->getValueAsListOfDefs("Uses"));
 
   // This flag is only inferred from the pattern.
   hasChain = false;
