@@ -266,12 +266,15 @@ MachineBasicBlock *AMDGPUInsertCondBarriers::buildCondBarrierSequence(
       .addMBB(DoBarrierBB);
 
   // DoBarrierBB: Execute synchronization barrier.
-  // For MI450 (gfx1250): use split barrier signal/wait pattern.
+  // For MI450 (gfx1250): use S_WAIT_DSCNT 0 + split barrier signal/wait pattern.
   // For MI350 (gfx950): use vmcnt(4) to wait until first buffer is filled,
   //   with lgkmcnt(max) - don't wait for LDS/GDS.
   // For MI300 (gfx942) and others: use max vmcnt (don't wait for VM
   //   operations), with lgkmcnt(0) - wait for all LDS/GDS.
   if (ST.hasGFX1250Insts()) {
+    BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL,
+            TII->get(AMDGPU::S_WAIT_DSCNT))
+        .addImm(0);
     BuildMI(*DoBarrierBB, DoBarrierBB->end(), DL,
             TII->get(AMDGPU::S_BARRIER_SIGNAL_IMM))
         .addImm(-1);
@@ -417,49 +420,48 @@ bool AMDGPUInsertCondBarriers::duplicateBarriersInLoopBody(MachineLoop *ML) {
   bool Changed = false;
 
   if (ST.hasGFX1250Insts()) {
-    // MI450 (gfx1250): Find S_BARRIER_SIGNAL_IMM instructions and duplicate
-    // the full fence+barrier pattern.
-    SmallVector<MachineInstr *, 4> BarrierSignals;
+    // MI450 (gfx1250): Find S_WAIT_DSCNT 0 + S_BARRIER_SIGNAL_IMM -1 +
+    // S_BARRIER_WAIT -1 pattern and duplicate all 3 instructions.
+    SmallVector<MachineInstr *, 4> WaitDscntInstrs;
     for (MachineBasicBlock *MBB : ML->blocks())
       for (MachineInstr &MI : *MBB)
-        if (MI.getOpcode() == AMDGPU::S_BARRIER_SIGNAL_IMM)
-          BarrierSignals.push_back(&MI);
+        if (MI.getOpcode() == AMDGPU::S_WAIT_DSCNT &&
+            MI.getOperand(0).getImm() == 0)
+          WaitDscntInstrs.push_back(&MI);
 
-    for (MachineInstr *SignalMI : BarrierSignals) {
-      MachineBasicBlock *MBB = SignalMI->getParent();
-      DebugLoc DL = SignalMI->getDebugLoc();
-      auto WaitIt = std::next(SignalMI->getIterator());
+    for (MachineInstr *WaitDscntMI : WaitDscntInstrs) {
+      MachineBasicBlock *MBB = WaitDscntMI->getParent();
+      DebugLoc DL = WaitDscntMI->getDebugLoc();
+      auto SignalIt = std::next(WaitDscntMI->getIterator());
 
-      // Expect S_BARRIER_WAIT immediately after S_BARRIER_SIGNAL_IMM.
+      // Expect S_BARRIER_SIGNAL_IMM -1 immediately after S_WAIT_DSCNT 0.
+      if (SignalIt == MBB->end() ||
+          SignalIt->getOpcode() != AMDGPU::S_BARRIER_SIGNAL_IMM ||
+          SignalIt->getOperand(0).getImm() != -1)
+        continue;
+
+      auto WaitIt = std::next(SignalIt);
+
+      // Expect S_BARRIER_WAIT -1 immediately after S_BARRIER_SIGNAL_IMM -1.
       if (WaitIt == MBB->end() ||
-          WaitIt->getOpcode() != AMDGPU::S_BARRIER_WAIT)
+          WaitIt->getOpcode() != AMDGPU::S_BARRIER_WAIT ||
+          WaitIt->getOperand(0).getImm() != -1)
         continue;
 
       MachineBasicBlock::iterator InsertPos = std::next(WaitIt);
 
-      // Check for release fence (ordering=4) after S_BARRIER_WAIT.
-      if (InsertPos != MBB->end() &&
-          InsertPos->getOpcode() == AMDGPU::ATOMIC_FENCE &&
-          InsertPos->getOperand(0).getImm() == 4)
-        InsertPos = std::next(InsertPos);
-
-      // Emit duplicate: S_WAIT_TENSORCNT 0 + full fence+barrier pattern.
-      BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_WAIT_TENSORCNT))
+      // Emit duplicate: S_WAIT_DSCNT 0 + S_BARRIER_SIGNAL_IMM -1 +
+      // S_BARRIER_WAIT -1.
+      BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_WAIT_DSCNT))
           .addImm(0);
-      BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::ATOMIC_FENCE))
-          .addImm(5)
-          .addImm(2);
       BuildMI(*MBB, InsertPos, DL,
               TII->get(AMDGPU::S_BARRIER_SIGNAL_IMM))
           .addImm(-1);
       BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::S_BARRIER_WAIT))
           .addImm(-1);
-      BuildMI(*MBB, InsertPos, DL, TII->get(AMDGPU::ATOMIC_FENCE))
-          .addImm(4)
-          .addImm(2);
 
       Changed = true;
-      LLVM_DEBUG(dbgs() << "Duplicated fence+barrier pattern "
+      LLVM_DEBUG(dbgs() << "Duplicated S_WAIT_DSCNT + barrier pattern "
                         << "in loop body for gfx1250\n");
     }
   } else {

@@ -123,14 +123,15 @@ body: |
 # MI350: S_WAITCNT 16372
 # MI350-NEXT: S_BARRIER
 
-# Test MI450 (gfx1250) uses S_BARRIER_SIGNAL_IMM + S_BARRIER_WAIT
+# Test MI450 (gfx1250) uses S_WAIT_DSCNT 0 + S_BARRIER_SIGNAL_IMM + S_BARRIER_WAIT
 # instead of S_WAITCNT + S_BARRIER
 # MI450-LABEL: name: test_basic_insertion
 # MI450: %[[WORKITEMIDX_MI450:[0-9]+]]:vgpr_32(s32) = COPY $vgpr0
 # Check prologue barrier with split barrier for MI450
 # MI450: %[[THREADID_SGPR_MI450_1:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_MI450]](s32)
 # MI450: S_CMP_GE_U32 %[[THREADID_SGPR_MI450_1]], %{{[0-9]+}}, implicit-def $scc
-# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450: S_WAIT_DSCNT 0
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
 # MI450-NEXT: S_BRANCH %bb.[[LOOP_HEADER_MI450:[0-9]+]]
 # Verify we branch to the actual loop header
@@ -139,7 +140,8 @@ body: |
 # Check epilogue barrier with split barrier for MI450
 # MI450: %[[THREADID_SGPR_MI450_2:[0-9]+]]:sreg_32_xm0 = V_READFIRSTLANE_B32 %[[WORKITEMIDX_MI450]](s32)
 # MI450: S_CMP_LT_U32 %[[THREADID_SGPR_MI450_2]], %{{[0-9]+}}, implicit-def $scc
-# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450: S_WAIT_DSCNT 0
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
 
 ---
@@ -463,10 +465,11 @@ body: |
 # MI350: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
 
 # For MI450, the existing S_WAITCNT + S_BARRIER in loop body is NOT
-# recognized (pass looks for S_BARRIER_SIGNAL_IMM), so no duplication occurs.
+# recognized (pass looks for S_WAIT_DSCNT 0 pattern), so no duplication occurs.
 # MI450-LABEL: name: test_barrier_duplication
 # Check prologue uses split barrier
-# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450: S_WAIT_DSCNT 0
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
 # Check loop body is unchanged
 # MI450: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
@@ -475,7 +478,8 @@ body: |
 # MI450-NOT: S_BARRIER_SIGNAL_IMM
 # MI450: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
 # Check epilogue uses split barrier
-# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450: S_WAIT_DSCNT 0
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
 
 ---
@@ -558,19 +562,18 @@ body: |
 
   bb.1:
     successors: %bb.2(0x40000000), %bb.3(0x40000000)
-    ; Loop with MI450 fence+barrier pattern in body
+    ; Loop with MI450 S_WAIT_DSCNT + barrier pattern in body
     %loop_counter:sgpr_32 = S_MOV_B32 0
     S_CMP_LT_U32 %loop_counter, 10, implicit-def $scc
     S_CBRANCH_SCC0 %bb.3, implicit $scc
 
   bb.2:
     successors: %bb.1(0x80000000)
-    ; Loop body with MI450 pattern: FENCE(acq) + SIGNAL + WAIT + FENCE(rel)
+    ; Loop body with MI450 pattern: S_WAIT_DSCNT 0 + SIGNAL + WAIT
     %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
-    ATOMIC_FENCE 5, 2
+    S_WAIT_DSCNT 0
     S_BARRIER_SIGNAL_IMM -1
     S_BARRIER_WAIT -1
-    ATOMIC_FENCE 4, 2
     %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
     %loop_counter = COPY %incremented
     S_BRANCH %bb.1
@@ -579,28 +582,26 @@ body: |
     S_ENDPGM 0
 
 # MI450-LABEL: name: test_mi450_barrier_duplication
-# For MI450 (gfx1250): the fence+barrier pattern is detected and duplicated.
-# After duplication, expect: original pattern + S_WAIT_TENSORCNT 0 + duplicate pattern.
+# For MI450 (gfx1250): the S_WAIT_DSCNT 0 + barrier pattern is detected and duplicated.
 
 # Check conditional prologue barrier uses split barrier
-# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450: S_WAIT_DSCNT 0
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
 
-# Check that the fence+barrier pattern in loop body gets duplicated
+# Check that the S_WAIT_DSCNT + barrier pattern in loop body gets duplicated
 # MI450: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
-# MI450-NEXT: ATOMIC_FENCE 5, 2
+# MI450-NEXT: S_WAIT_DSCNT 0
 # MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
-# MI450-NEXT: ATOMIC_FENCE 4, 2
-# MI450-NEXT: S_WAIT_TENSORCNT 0
-# MI450-NEXT: ATOMIC_FENCE 5, 2
+# MI450-NEXT: S_WAIT_DSCNT 0
 # MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
-# MI450-NEXT: ATOMIC_FENCE 4, 2
 # MI450: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
 
 # Check conditional epilogue barrier uses split barrier
-# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450: S_WAIT_DSCNT 0
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
 
 ---
@@ -623,16 +624,17 @@ body: |
 
   bb.1:
     successors: %bb.2(0x40000000), %bb.3(0x40000000)
-    ; Loop with S_BARRIER_SIGNAL_IMM but no adjacent S_BARRIER_WAIT
+    ; Loop with S_BARRIER_SIGNAL_IMM but no S_WAIT_DSCNT before it
     %loop_counter:sgpr_32 = S_MOV_B32 0
     S_CMP_LT_U32 %loop_counter, 10, implicit-def $scc
     S_CBRANCH_SCC0 %bb.3, implicit $scc
 
   bb.2:
     successors: %bb.1(0x80000000)
-    ; Loop body with standalone S_BARRIER_SIGNAL_IMM (no S_BARRIER_WAIT following)
+    ; Loop body with S_BARRIER_SIGNAL_IMM + S_BARRIER_WAIT but no S_WAIT_DSCNT 0
     %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
     S_BARRIER_SIGNAL_IMM -1
+    S_BARRIER_WAIT -1
     %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
     %loop_counter = COPY %incremented
     S_BRANCH %bb.1
@@ -641,20 +643,23 @@ body: |
     S_ENDPGM 0
 
 # MI450-LABEL: name: test_mi450_no_duplication_without_wait
-# S_BARRIER_SIGNAL_IMM without adjacent S_BARRIER_WAIT should NOT be duplicated.
+# S_BARRIER_SIGNAL_IMM without preceding S_WAIT_DSCNT 0 should NOT be duplicated.
 
 # Check prologue conditional barrier still inserted
-# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450: S_WAIT_DSCNT 0
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
 
-# Check loop body: standalone S_BARRIER_SIGNAL_IMM not duplicated
+# Check loop body: barrier without S_WAIT_DSCNT 0 is not duplicated
 # MI450: %some_data:vgpr_32 = V_MOV_B32_e32 42, implicit $exec
 # MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
+# MI450-NEXT: S_BARRIER_WAIT -1
 # MI450-NOT: S_BARRIER_SIGNAL_IMM
 # MI450: %incremented:sgpr_32 = S_ADD_U32 %loop_counter, 1, implicit-def $scc
 
 # Check epilogue conditional barrier
-# MI450: S_BARRIER_SIGNAL_IMM -1
+# MI450: S_WAIT_DSCNT 0
+# MI450-NEXT: S_BARRIER_SIGNAL_IMM -1
 # MI450-NEXT: S_BARRIER_WAIT -1
 
 ---
